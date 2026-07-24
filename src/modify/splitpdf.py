@@ -10,8 +10,6 @@ def splitpdf(pdf_path, output_folder=None):
         output_folder = pdf_path.with_suffix("")
     output_folder = Path(output_folder)
 
-    output_folder.mkdir(exist_ok=True)
-
     reader = PdfReader(pdf_path)
 
     for page_number, page in enumerate(reader.pages, start=1):

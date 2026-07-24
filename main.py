@@ -1,3 +1,4 @@
-import numpy as np
+from src.gui.app import PDFToolApp
 
-
+app = PDFToolApp()
+app.run()
