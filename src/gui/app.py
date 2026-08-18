@@ -21,18 +21,15 @@ ctk.set_default_color_theme("green")
 class PDFToolApp:
 
     def __init__(self):
-        self.root = ctk.CTk()
+        self.root = ctk.CTk(fg_color='#E5F0FF')
+        # self.root = ctk.CTk()
 
         icon_path = Path("images/logoTU_icon.ico")
-
-        if icon_path.exists():
-            self.root.iconbitmap(icon_path)
-
+        self.root.iconbitmap(icon_path)
         self.root.title("Transform PDF")
         self.root.geometry("1200x700")
 
         self.merge_pdf_paths = []
-
         self.split_pdf_path = None
         self.split_pdf_page_count = None
 
@@ -41,15 +38,17 @@ class PDFToolApp:
     def create_widgets(self):
         header_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         header_frame.pack(fill="x", pady=(15, 5))
+        header_content = ctk.CTkFrame(header_frame, fg_color="transparent")
+        header_content.pack()
 
         logo_path = Path("images/logoTU_icon.png")
+        self.logo_image = ctk.CTkImage(light_image=Image.open(logo_path), size=(60, 60))
+        ctk.CTkLabel(header_content, text="", image=self.logo_image).pack(side="left", padx=(0, 15))
 
-        if logo_path.exists():
-            self.logo_image = ctk.CTkImage(light_image=Image.open(logo_path), size=(70, 70))
-            ctk.CTkLabel(header_frame, text="", image=self.logo_image).pack()
-
-        ctk.CTkLabel(header_frame, text="Transform PDF", font=("Segoe UI", 28, "bold")).pack()
-        ctk.CTkLabel(header_frame, text="by Jesse Metz", font=("Segoe UI", 12)).pack()
+        header_text_frame = ctk.CTkFrame(header_content, fg_color="transparent")
+        header_text_frame.pack(side="left")
+        ctk.CTkLabel(header_text_frame, text="Transform PDF", font=("Segoe UI", 28, "bold")).pack(anchor="w")
+        ctk.CTkLabel(header_text_frame, text="by Jesse Metz", font=("Segoe UI", 12)).pack(anchor="w")
 
         content_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         content_frame.pack(fill="both", expand=True, padx=20, pady=15)
@@ -74,7 +73,6 @@ class PDFToolApp:
 
         list_frame = ctk.CTkFrame(frame)
         list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 10))
-
         scrollbar = tk.Scrollbar(list_frame)
         self.merge_listbox = tk.Listbox(list_frame, font=("Segoe UI", 10), selectmode=tk.SINGLE, activestyle="none", borderwidth=0, height=10)
         self.merge_listbox.config(yscrollcommand=scrollbar.set)
@@ -84,9 +82,9 @@ class PDFToolApp:
 
         button_frame = ctk.CTkFrame(frame, fg_color="transparent")
         button_frame.pack(fill="x", padx=20)
-
         ctk.CTkButton(button_frame, text="▲ Up", width=100, command=self.move_up).pack(side="left")
         ctk.CTkButton(button_frame, text="▼ Down", width=100, command=self.move_down).pack(side="left", padx=10)
+
         ctk.CTkButton(frame, text="Merge PDFs", height=40, command=self.save_merged_pdf).pack(fill="x", padx=20, pady=(15, 20))
 
     def select_merge_files(self):
