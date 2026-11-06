@@ -12,6 +12,7 @@ from src.modify.mergepdf import mergepdf
 from src.modify.splitpdf import splitpdf
 from src.modify.extractpages import extractpages
 from src.modify.rotatepdf import rotatepdf
+from src.convert.imagetopdf import imagetopdf, imagestopdfs, thumbnail, page_count, IMAGE_EXTENSIONS
 from src.utils.page_ranges import parse_page_ranges
 from src.utils.thumbnails import page_thumbnails, has_real_previews, PREVIEW_BG
 
@@ -39,7 +40,7 @@ HEADING_FONT = "Bahnschrift SemiBold"
 LIGHT_FONT = "Bahnschrift Light"
 BODY_FONT = "Segoe UI Variable Text"
 
-MODES = ["Merge PDF", "Extract / Split", "Rotate"]
+MODES = ["Merge PDF", "Extract / Split", "Rotate", "Image to PDF"]
 
 TILE_WIDTH = 160
 TILE_PAD = 7
@@ -98,7 +99,7 @@ class PDFToolApp:
         self.root.iconbitmap(icon_path)
         self.root.title("Transform PDF")
         self.root.geometry("1200x740")
-        self.root.minsize(980, 640)
+        self.root.minsize(1160, 660)
 
         # Merge
         self.merge_pdf_paths = []
@@ -111,6 +112,9 @@ class PDFToolApp:
         self.rotate_thumbs = []          # PIL images per page
         self.rotate_tiles = []           # widgets per page
         self.rotate_columns = 0
+        # Image to PDF
+        self.image_items = []            # dicts: path, thumb, angle, pages + widgets
+        self.image_columns = 0
 
         self.mode_frames = {}
 
@@ -131,6 +135,7 @@ class PDFToolApp:
             "Merge PDF": self.build_merge_frame,
             "Extract / Split": self.build_split_frame,
             "Rotate": self.build_rotate_frame,
+            "Image to PDF": self.build_image_frame,
         }
         for mode, builder in builders.items():
             frame = card(self.content_frame)
@@ -153,7 +158,7 @@ class PDFToolApp:
 
         # Technische Unie logo (prominent, left)
         logo = Image.open(Path("images/logoTU.png"))
-        logo_height = 58
+        logo_height = 54
         logo_width = int(logo.width * logo_height / logo.height)
         self.logo_image = ctk.CTkImage(light_image=logo, size=(logo_width, logo_height))
         ctk.CTkLabel(inner, text="", image=self.logo_image).pack(side="left")
@@ -174,10 +179,10 @@ class PDFToolApp:
         # Mode switch (top right)
         self.mode_switch = ctk.CTkSegmentedButton(
             inner, values=MODES, command=self.show_mode,
-            font=heading(15), height=42, corner_radius=12, border_width=4,
+            font=heading(14), height=42, corner_radius=12, border_width=4,
             fg_color=SUBCARD, unselected_color=SUBCARD, unselected_hover_color=GREEN_LIGHT,
             selected_color=GREEN, selected_hover_color=GREEN_HOVER,
-            text_color=TEXT, dynamic_resizing=False, width=420,
+            text_color=TEXT, dynamic_resizing=False, width=520,
         )
         self.mode_switch.pack(side="right")
         self._style_mode_buttons()
@@ -601,6 +606,272 @@ class PDFToolApp:
         rotatepdf(pdf_path=self.rotate_pdf_path, output_file=output_file, page_angles=page_angles)
         self.set_status(f"✔  Rotated PDF saved: {output_file}")
         messagebox.showinfo("Success", f"Rotated PDF saved:\n{output_file}")
+
+    # ==========================================================
+    # IMAGE TO PDF
+    # ==========================================================
+
+    def build_image_frame(self, frame):
+        self.section_title(frame, "Image to PDF",
+                           "Turn photos, scans and screenshots into PDF. Rotate and order them first if needed.")
+
+        # Toolbar
+        toolbar = ctk.CTkFrame(frame, fg_color=SUBCARD, corner_radius=12)
+        toolbar.pack(fill="x", padx=28)
+        secondary_button(toolbar, "＋  Add images", self.add_images, width=180).pack(side="left", padx=14, pady=14)
+
+        file_text = ctk.CTkFrame(toolbar, fg_color="transparent")
+        file_text.pack(side="left", fill="x", expand=True)
+        self.image_count_label = ctk.CTkLabel(file_text, text="No images selected", font=font(13, "bold"), text_color=TEXT, anchor="w")
+        self.image_count_label.pack(anchor="w")
+        types = ", ".join(ext.lstrip(".").upper() for ext in IMAGE_EXTENSIONS if ext not in (".jpeg", ".jfif", ".tiff"))
+        ctk.CTkLabel(file_text, text=f"Supported: {types}", font=font(12), text_color=MUTED, anchor="w", height=16).pack(anchor="w")
+
+        all_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
+        all_frame.pack(side="right", padx=14)
+        ctk.CTkLabel(all_frame, text="All images", font=font(12), text_color=MUTED).pack(side="left", padx=(0, 8))
+        arrow_button(all_frame, "↺", lambda: self.rotate_all_images(-90)).pack(side="left", padx=2)
+        arrow_button(all_frame, "↻", lambda: self.rotate_all_images(90)).pack(side="left", padx=2)
+        small_button(all_frame, "Clear", self.clear_images, width=60).pack(side="left", padx=(8, 0))
+
+        # Bottom bar: output choice + convert button
+        bottom = ctk.CTkFrame(frame, fg_color="transparent")
+        bottom.pack(side="bottom", fill="x", padx=28, pady=(10, 24))
+        self.image_summary_label = ctk.CTkLabel(bottom, text="", font=font(13), text_color=MUTED)
+        self.image_summary_label.pack(side="left")
+
+        primary_button(bottom, "Convert to PDF", self.save_images_as_pdf, width=240, height=48).pack(side="right")
+        self.image_output_mode = ctk.CTkSegmentedButton(
+            bottom, values=["One combined PDF", "Separate PDF per image"],
+            command=lambda value: self.update_image_summary(),
+            font=font(12, "bold"), height=36, corner_radius=10,
+            fg_color=SUBCARD, unselected_color=SUBCARD, unselected_hover_color=GREEN_LIGHT,
+            selected_color=NAVY, selected_hover_color=NAVY, text_color=TEXT,
+        )
+        self.image_output_mode.set("One combined PDF")
+        self.image_output_mode.pack(side="right", padx=16)
+        self._style_output_buttons()
+
+        # Image grid
+        self.image_grid = ctk.CTkScrollableFrame(
+            frame, fg_color="transparent", corner_radius=0,
+            scrollbar_button_color="#C3D1E6", scrollbar_button_hover_color="#A9BBD6",
+        )
+        self.image_grid.pack(fill="both", expand=True, padx=20, pady=(12, 0))
+        self.image_grid._parent_canvas.bind("<Configure>", lambda event: self.layout_image_tiles(), add="+")
+
+        self.image_placeholder = ctk.CTkLabel(
+            self.image_grid, text="Add one or more images to get started.",
+            font=font(14), text_color=MUTED,
+        )
+        self.image_placeholder.grid(row=0, column=0, padx=10, pady=60, sticky="w")
+
+    def _style_output_buttons(self):
+        selected = self.image_output_mode.get()
+        for value, button in self.image_output_mode._buttons_dict.items():
+            button.configure(text_color="white" if value == selected else TEXT)
+
+    def add_images(self):
+        patterns = " ".join(f"*{ext}" for ext in IMAGE_EXTENSIONS)
+        files = filedialog.askopenfilenames(
+            title="Select images",
+            filetypes=[("Images", patterns), ("All files", "*.*")],
+        )
+        if not files: return
+        self.add_image_files(files)
+
+    def add_image_files(self, files):
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        failed = []
+        try:
+            for file in files:
+                path = Path(file)
+                try:
+                    item = {"path": path, "thumb": thumbnail(path), "angle": 0, "pages": page_count(path)}
+                except Exception:
+                    failed.append(path.name)
+                    continue
+                self.create_image_tile(item)
+                self.image_items.append(item)
+        finally:
+            self.root.configure(cursor="")
+
+        self.refresh_image_grid()
+        if failed:
+            messagebox.showwarning("Image to PDF", "These files could not be opened as an image:\n\n" + "\n".join(failed))
+
+    def create_image_tile(self, item):
+        tile = ctk.CTkFrame(self.image_grid, fg_color=CARD, corner_radius=12, border_width=2,
+                            border_color=BORDER, width=TILE_WIDTH)
+
+        # Top row: order number + remove
+        top = ctk.CTkFrame(tile, fg_color="transparent")
+        top.pack(fill="x", padx=8, pady=(6, 0))
+        item["number_label"] = ctk.CTkLabel(top, text="", width=26, height=22, corner_radius=11,
+                                            fg_color=NAVY, text_color="white", font=font(11, "bold"))
+        item["number_label"].pack(side="left")
+        ctk.CTkButton(top, text="✕", width=24, height=22, corner_radius=8, fg_color="transparent",
+                      hover_color="#FDE2E2", text_color=MUTED, font=font(12),
+                      command=lambda: self.remove_image(item)).pack(side="right")
+
+        preview_area = ctk.CTkFrame(tile, fg_color=PREVIEW_BG, corner_radius=10,
+                                    width=TILE_WIDTH - 16, height=PREVIEW_BOX + 12)
+        preview_area.pack(padx=8, pady=4)
+        preview_area.pack_propagate(False)
+        image_label = ctk.CTkLabel(preview_area, text="", cursor="hand2")
+        image_label.pack(expand=True)
+        image_label.bind("<Button-1>", lambda event: self.rotate_image(item, 90))
+
+        name = item["path"].name
+        if len(name) > 20:
+            name = name[:12] + "…" + name[-7:]
+        ctk.CTkLabel(tile, text=name, font=font(11, "bold"), text_color=TEXT, height=16).pack(padx=8)
+        info_label = ctk.CTkLabel(tile, text="", font=font(11), text_color=MUTED, height=14)
+        info_label.pack(padx=8)
+
+        controls = ctk.CTkFrame(tile, fg_color="transparent")
+        controls.pack(fill="x", padx=8, pady=(4, 8))
+        controls.columnconfigure((0, 1, 2, 3), weight=1)
+        order_font = ctk.CTkFont(family="Segoe UI Symbol", size=12)
+        arrow_button(controls, "↺", lambda: self.rotate_image(item, -90)).grid(row=0, column=0, sticky="w")
+        move_left = small_button(controls, "◀", lambda: self.move_image(item, -1))
+        move_left.configure(font=order_font)
+        move_left.grid(row=0, column=1)
+        move_right = small_button(controls, "▶", lambda: self.move_image(item, 1))
+        move_right.configure(font=order_font)
+        move_right.grid(row=0, column=2)
+        arrow_button(controls, "↻", lambda: self.rotate_image(item, 90)).grid(row=0, column=3, sticky="e")
+
+        item.update(frame=tile, image_label=image_label, info_label=info_label)
+        self.update_image_tile(item)
+
+    def update_image_tile(self, item):
+        angle = item["angle"]
+        image = item["thumb"].rotate(-angle, expand=True)
+        scale = PREVIEW_BOX / max(image.size)
+        size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
+        item["ctk_image"] = ctk.CTkImage(light_image=image, size=size)
+        item["image_label"].configure(image=item["ctk_image"])
+
+        parts = []
+        if item["pages"] > 1:
+            parts.append(f"{item['pages']} pages")
+        if angle:
+            parts.append({90: "↻ 90° right", 180: "180°", 270: "↺ 90° left"}[angle])
+        item["info_label"].configure(text="  ·  ".join(parts), text_color=GREEN if angle else MUTED)
+        item["frame"].configure(border_color=GREEN if angle else BORDER)
+
+    def refresh_image_grid(self):
+        """Re-place all tiles in the current order and update numbers and summary."""
+        if self.image_items:
+            self.image_placeholder.grid_forget()
+        else:
+            self.image_placeholder.grid(row=0, column=0, padx=10, pady=60, sticky="w")
+
+        for number, item in enumerate(self.image_items, start=1):
+            item["number_label"].configure(text=str(number))
+        self.image_columns = 0
+        self.layout_image_tiles()
+
+        count = len(self.image_items)
+        self.image_count_label.configure(
+            text=f"{count} image{'s' if count != 1 else ''} selected" if count else "No images selected"
+        )
+        self.update_image_summary()
+
+    def layout_image_tiles(self):
+        if not self.image_items: return
+
+        width = self.image_grid._parent_canvas.winfo_width()
+        columns = max(1, width // (TILE_WIDTH + 2 * TILE_PAD))
+        if columns == self.image_columns: return
+        self.image_columns = columns
+
+        for index, item in enumerate(self.image_items):
+            item["frame"].grid(row=index // columns, column=index % columns, padx=TILE_PAD, pady=TILE_PAD)
+
+    def rotate_image(self, item, delta):
+        item["angle"] = (item["angle"] + delta) % 360
+        self.update_image_tile(item)
+        self.update_image_summary()
+
+    def rotate_all_images(self, delta):
+        for item in self.image_items:
+            self.rotate_image(item, delta)
+
+    def move_image(self, item, step):
+        index = self.image_items.index(item)
+        new_index = index + step
+        if not 0 <= new_index < len(self.image_items): return
+
+        self.image_items[index], self.image_items[new_index] = self.image_items[new_index], self.image_items[index]
+        self.refresh_image_grid()
+
+    def remove_image(self, item):
+        self.image_items.remove(item)
+        item["frame"].destroy()
+        self.refresh_image_grid()
+
+    def clear_images(self):
+        for item in self.image_items:
+            item["frame"].destroy()
+        self.image_items = []
+        self.refresh_image_grid()
+
+    def update_image_summary(self):
+        self._style_output_buttons()
+        count = len(self.image_items)
+        if not count:
+            self.image_summary_label.configure(text="")
+            return
+
+        if self.image_output_mode.get() == "One combined PDF":
+            pages = sum(item["pages"] for item in self.image_items)
+            text = f"1 PDF with {pages} page{'s' if pages != 1 else ''}, in the order shown."
+        else:
+            text = f"{count} separate PDF{'s' if count != 1 else ''}, one per image."
+        self.image_summary_label.configure(text=text)
+
+    def save_images_as_pdf(self):
+        if not self.image_items:
+            messagebox.showwarning("Image to PDF", "Add at least one image first.")
+            return
+
+        paths = [item["path"] for item in self.image_items]
+        rotations = [item["angle"] for item in self.image_items]
+        first = paths[0]
+
+        if self.image_output_mode.get() == "One combined PDF":
+            output_file = filedialog.asksaveasfilename(
+                title="Save PDF",
+                initialdir=first.parent,
+                initialfile=f"{first.stem}.pdf",
+                defaultextension=".pdf",
+                filetypes=[("PDF files", "*.pdf")]
+            )
+            if not output_file: return
+            if self._run_busy(lambda: imagetopdf(paths, output_file, rotations)) is None: return
+            self.set_status(f"✔  PDF saved: {output_file}")
+            messagebox.showinfo("Success", f"PDF saved:\n{output_file}")
+        else:
+            output_folder = filedialog.askdirectory(title="Folder for the PDF files", initialdir=first.parent)
+            if not output_folder: return
+            created = self._run_busy(lambda: imagestopdfs(paths, output_folder, rotations))
+            if created is None: return
+            self.set_status(f"✔  {len(created)} PDF files saved to: {output_folder}")
+            messagebox.showinfo("Success", f"{len(created)} PDF files saved to:\n{output_folder}")
+
+    def _run_busy(self, task):
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            return task()
+        except Exception as error:
+            messagebox.showerror("Image to PDF", f"Something went wrong:\n{error}")
+            return None
+        finally:
+            self.root.configure(cursor="")
 
     def run(self):
         self.root.mainloop()
