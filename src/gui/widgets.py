@@ -211,6 +211,61 @@ class SlideToggle(tk.Canvas):
 
 
 # ==========================================================
+# TOOLTIP
+# ==========================================================
+
+class Tooltip:
+    """Small pop-up text that appears when the mouse rests on a widget."""
+
+    def __init__(self, root):
+        self.root = root
+        self.window = None
+        self._show_job = None
+        self._hide_job = None
+
+    def attach(self, widget, text_func):
+        """text_func() returns the text to show (so it can change over time)."""
+        widget.bind("<Enter>", lambda event: self._enter(text_func), add="+")
+        widget.bind("<Leave>", lambda event: self._leave(), add="+")
+        widget.bind("<ButtonPress>", lambda event: self.hide(), add="+")
+
+    def _enter(self, text_func):
+        if self._hide_job:
+            self.root.after_cancel(self._hide_job)
+            self._hide_job = None
+        if self.window is None and self._show_job is None:
+            self._show_job = self.root.after(450, lambda: self._show(text_func()))
+
+    def _leave(self):
+        if self._show_job:
+            self.root.after_cancel(self._show_job)
+            self._show_job = None
+        # small delay: moving between the parts of one widget fires Leave + Enter
+        self._hide_job = self.root.after(60, self.hide)
+
+    def _show(self, text):
+        self._show_job = None
+        if not text:
+            return
+        x, y = self.root.winfo_pointerx() + 14, self.root.winfo_pointery() + 18
+        self.window = tk.Toplevel(self.root)
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        tk.Label(self.window, text=text, justify="left", bg="#1F2937", fg="white", padx=10, pady=6,
+                 font=(BODY_FONT, 10)).pack()
+        self.window.geometry(f"+{x}+{y}")
+
+    def hide(self):
+        for job in (self._show_job, self._hide_job):
+            if job:
+                self.root.after_cancel(job)
+        self._show_job = self._hide_job = None
+        if self.window is not None:
+            self.window.destroy()
+            self.window = None
+
+
+# ==========================================================
 # TILE GRID
 # ==========================================================
 
@@ -244,7 +299,8 @@ class TileGrid(ctk.CTkScrollableFrame):
     """
     Scrollable grid of tiles. Every item is a dict with at least:
         thumb (PIL image), title (str)
-    optional: subtitle (str), pages (int), angle (0/90/180/270)
+    optional: subtitle (str), pages (int), angle (0/90/180/270),
+              tooltip (str, shown when the mouse rests on the tile)
 
     Tiles can be dragged to a new place, removed with ✕, moved with ◀ ▶ and
     (if rotatable) rotated with ↺ ↻. on_change() is called after every change.
@@ -268,6 +324,7 @@ class TileGrid(ctk.CTkScrollableFrame):
 
         self.marker = ctk.CTkFrame(self, width=5, height=PREVIEW_BOX, fg_color=GREEN, corner_radius=3)
         self._drag = None
+        self.tooltip = Tooltip(self.winfo_toplevel())
 
     # ---------- adding / removing ----------
 
@@ -275,10 +332,12 @@ class TileGrid(ctk.CTkScrollableFrame):
         item.setdefault("angle", 0)
         item.setdefault("pages", 1)
         item.setdefault("subtitle", "")
+        item.setdefault("tooltip", item["title"])
         self._create_tile(item)
         self.items.append(item)
 
     def remove(self, item):
+        self.tooltip.hide()
         self.items.remove(item)
         item["frame"].destroy()
         self.refresh()
@@ -342,6 +401,10 @@ class TileGrid(ctk.CTkScrollableFrame):
 
     # ---------- tiles ----------
 
+    @staticmethod
+    def _short(text, limit=20):
+        return text if len(text) <= limit else text[:9] + "…" + text[-(limit - 10):]
+
     def _create_tile(self, item):
         tile = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12, border_width=2,
                             border_color=BORDER, width=TILE_WIDTH)
@@ -362,10 +425,7 @@ class TileGrid(ctk.CTkScrollableFrame):
         image_label = ctk.CTkLabel(preview_area, text="", cursor="fleur")
         image_label.pack(expand=True)
 
-        title = item["title"]
-        if len(title) > 20:
-            title = title[:12] + "…" + title[-7:]
-        title_label = ctk.CTkLabel(tile, text=title, font=font(11, "bold"), text_color=TEXT, height=16)
+        title_label = ctk.CTkLabel(tile, text="", font=font(11, "bold"), text_color=TEXT, height=16)
         title_label.pack(padx=8)
         info_label = ctk.CTkLabel(tile, text="", font=font(11), text_color=MUTED, height=14)
         info_label.pack(padx=8)
@@ -389,7 +449,10 @@ class TileGrid(ctk.CTkScrollableFrame):
             widget.bind("<B1-Motion>", self._drag_motion, add="+")
             widget.bind("<ButtonRelease-1>", self._drag_end, add="+")
 
-        item.update(frame=tile, image_label=image_label, info_label=info_label)
+        for widget in (image_label, title_label, info_label):
+            self.tooltip.attach(widget, lambda: item["tooltip"])
+
+        item.update(frame=tile, image_label=image_label, title_label=title_label, info_label=info_label)
         self.update_tile(item)
 
     def update_tile(self, item):
@@ -399,6 +462,7 @@ class TileGrid(ctk.CTkScrollableFrame):
         item["display"] = image
         item["ctk_image"] = ctk.CTkImage(light_image=image, size=size)
         item["image_label"].configure(image=item["ctk_image"])
+        item["title_label"].configure(text=self._short(item["title"]))
 
         parts = []
         if item["subtitle"]:
@@ -423,6 +487,7 @@ class TileGrid(ctk.CTkScrollableFrame):
             if abs(event.x_root - drag["x"]) + abs(event.y_root - drag["y"]) < 8:
                 return
             drag["active"] = True
+            self.tooltip.hide()
             self._make_ghost(drag["item"])
             drag["item"]["frame"].configure(fg_color=SUBCARD)
 

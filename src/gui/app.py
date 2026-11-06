@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 
@@ -8,13 +9,12 @@ import customtkinter as ctk
 from PIL import Image
 
 from src.convert.imagetopdf import imagetopdf, imagestopdfs, thumbnail, page_count, IMAGE_EXTENSIONS
-from src.modify.mergepdf import mergepdf
 from src.modify.organize import write_pages, write_page_groups, unique_path
 from src.utils.page_ranges import parse_page_groups, format_page_ranges
-from src.utils.thumbnails import page_thumbnails, first_page_thumbnail, pdf_page_count, has_real_previews
+from src.utils.thumbnails import page_thumbnails, has_real_previews
 from src.gui.widgets import (
     BG, CARD, SUBCARD, BORDER, GREEN, NAVY, TEXT, MUTED, RED, GREEN_LIGHT, GREEN_HOVER,
-    HEADING_FONT, LIGHT_FONT, SYMBOL_FONT,
+    LIGHT_FONT, SYMBOL_FONT,
     font, heading, primary_button, secondary_button, small_button, symbol_button, card, plural,
     SlideToggle, TileGrid,
 )
@@ -28,7 +28,12 @@ except ImportError:
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("green")
 
-MODES = ["Merge PDF", "Edit Pages", "Image to PDF"]
+PDF_MODE = "Merge & Edit PDF"
+IMAGE_MODE = "Image to PDF"
+MODES = [PDF_MODE, IMAGE_MODE]
+
+FILES_VIEW = "Files"
+PAGES_VIEW = "Pages"
 
 ONE_PDF = "One PDF"
 EVERY_PAGE = "Every page separately"
@@ -54,7 +59,12 @@ else:
 
 
 def natural_key(path):
+    """Sort key that puts 'page2' before 'page10' (like Explorer does)."""
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", Path(path).name)]
+
+
+def sorted_paths(paths):
+    return sorted((Path(p) for p in paths), key=natural_key)
 
 
 def is_pdf(path):
@@ -65,6 +75,24 @@ def is_image(path):
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS
 
 
+def short_names(stems):
+    """
+    Short labels that tell files apart: the shared beginning is left out.
+    ["Stippie en Jan, page01", "Stippie en Jan, page02"] -> ["page01", "page02"]
+    """
+    stems = list(dict.fromkeys(stems))
+    labels = {}
+    for stem in stems:
+        # longest beginning this name shares with any other name
+        shared = max((len(os.path.commonprefix([stem, other])) for other in stems if other != stem), default=0)
+        prefix = stem[:shared]
+        # cut back to the start of a word, so "page01" stays readable
+        cut = max(prefix.rfind(char) for char in " ,_-.") + 1 if prefix else 0
+        label = stem[cut:].strip(" ,_-.") or stem
+        labels[stem] = label if len(label) <= 16 else "…" + label[-15:]
+    return labels
+
+
 class PDFToolApp:
 
     def __init__(self):
@@ -73,10 +101,12 @@ class PDFToolApp:
         self.root.iconbitmap(Path("images/logoTU_icon.ico"))
         self.root.title("Transform PDF")
         self.root.geometry("1200x760")
-        self.root.minsize(1060, 660)
+        self.root.minsize(1100, 660)
 
         self.mode_frames = {}
-        self.pages_original = []     # (source, index, thumb) as loaded, for Reset
+        self.pages_original = []     # page dicts as loaded (for Reset)
+        self.page_counts = {}        # source path -> number of pages in that file
+        self.pdf_view = PAGES_VIEW
 
         self.create_widgets()
         self.show_mode(MODES[0])
@@ -92,12 +122,7 @@ class PDFToolApp:
         self.content_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.content_frame.pack(fill="both", expand=True, padx=28, pady=(20, 6))
 
-        builders = {
-            "Merge PDF": self.build_merge_frame,
-            "Edit Pages": self.build_pages_frame,
-            "Image to PDF": self.build_image_frame,
-        }
-        for mode, builder in builders.items():
+        for mode, builder in ((PDF_MODE, self.build_pdf_frame), (IMAGE_MODE, self.build_image_frame)):
             frame = card(self.content_frame)
             builder(frame)
             self.mode_frames[mode] = frame
@@ -136,7 +161,7 @@ class PDFToolApp:
             font=heading(15), height=42, corner_radius=12, border_width=4,
             fg_color=SUBCARD, unselected_color=SUBCARD, unselected_hover_color=GREEN_LIGHT,
             selected_color=GREEN, selected_hover_color=GREEN_HOVER,
-            text_color=TEXT, dynamic_resizing=False, width=440,
+            text_color=TEXT, dynamic_resizing=False, width=380,
         )
         self.mode_switch.pack(side="right")
 
@@ -167,15 +192,15 @@ class PDFToolApp:
         """Light bar with an add-button, two lines of text and room for tools on the right."""
         bar = ctk.CTkFrame(frame, fg_color=SUBCARD, corner_radius=12)
         bar.pack(fill="x", padx=28)
-        secondary_button(bar, button_text, command, width=190).pack(side="left", padx=14, pady=14)
+        secondary_button(bar, button_text, command, width=170).pack(side="left", padx=14, pady=14)
+        tools = ctk.CTkFrame(bar, fg_color="transparent")
+        tools.pack(side="right", padx=14)   # packed before the text, so the tools never get squeezed
         text = ctk.CTkFrame(bar, fg_color="transparent")
         text.pack(side="left", fill="x", expand=True)
         title = ctk.CTkLabel(text, text="", font=font(13, "bold"), text_color=TEXT, anchor="w")
         title.pack(anchor="w")
         info = ctk.CTkLabel(text, text="", font=font(12), text_color=MUTED, anchor="w", height=16)
         info.pack(anchor="w")
-        tools = ctk.CTkFrame(bar, fg_color="transparent")
-        tools.pack(side="right", padx=14)
         return title, info, tools
 
     def bottom_bar(self, frame):
@@ -198,101 +223,39 @@ class PDFToolApp:
             self.root.configure(cursor="")
 
     # ==========================================================
-    # MERGE PDF
+    # MERGE & EDIT PDF
     # ==========================================================
+    #
+    # The pages are the heart of this screen: one list of page dicts
+    #   {"source": Path, "index": 0-based page number, "thumb": PIL image, "angle": 0/90/180/270}
+    # It can be shown in two ways:
+    #   - Pages view: one tile per page
+    #   - Files view: one tile per file (pages that follow each other and come
+    #     from the same file), handy for merging. Moving, rotating or deleting
+    #     a file tile does that for all its pages.
 
-    def build_merge_frame(self, frame):
-        self.section_title(frame, "Merge PDF documents",
-                           "Combine several PDF files into one. Drag the files into the right order first.")
-        self.merge_title, self.merge_info, tools = self.toolbar(frame, "＋  Add PDF files", self.select_merge_files)
-        self.merge_title.configure(text="No files selected")
-        self.merge_info.configure(text="Tip: you can also drag PDF files into this window")
-        small_button(tools, "Clear", lambda: self.merge_grid.clear(), width=60).pack(side="left")
+    def build_pdf_frame(self, frame):
+        self.section_title(frame, "Merge & edit PDF",
+                           "Add one or more PDFs. Drag files or pages into the right order, rotate or delete them, then save.")
+        self.pdf_title, self.pdf_info, tools = self.toolbar(frame, "＋  Add PDF files", self.select_pdf_files)
+        self.pdf_title.configure(text="No PDF selected")
+        self.pdf_info.configure(text="Tip: you can also drag PDF files into this window")
 
-        bar, self.merge_summary = self.bottom_bar(frame)
-        primary_button(bar, "Merge PDFs", self.save_merged_pdf, width=240, height=48).pack(side="right")
-
-        self.merge_grid = TileGrid(
-            frame, "Add two or more PDF files to merge them.\nYou can also drag them from Explorer into this window.",
-            on_change=self.update_merge_summary, rotatable=False, stacked=True,
-        )
-        self.merge_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
-
-    def select_merge_files(self):
-        files = filedialog.askopenfilenames(title="Select PDF files", filetypes=[("PDF files", "*.pdf")])
-        if files:
-            self.add_merge_files(files)
-
-    def add_merge_files(self, files):
-        failed = []
-
-        def load():
-            for file in files:
-                path = Path(file)
-                try:
-                    item = {"path": path, "title": path.name,
-                            "thumb": first_page_thumbnail(path), "pages": pdf_page_count(path)}
-                except Exception:
-                    failed.append(path.name)
-                    continue
-                self.merge_grid.add(item)
-
-        self.run_busy("Merge PDF", load)
-        self.merge_grid.refresh()
-        if failed:
-            messagebox.showwarning("Merge PDF", "These files could not be opened as PDF:\n\n" + "\n".join(failed))
-
-    def update_merge_summary(self):
-        items = self.merge_grid.items
-        pages = sum(item["pages"] for item in items)
-        self.merge_title.configure(text=f"{plural(len(items), 'file')} selected" if items else "No files selected")
-        self.merge_summary.configure(
-            text=f"1 PDF with {plural(pages, 'page')}, files in the order shown." if len(items) > 1
-            else ("Add at least one more file." if items else "")
-        )
-
-    def save_merged_pdf(self):
-        paths = [item["path"] for item in self.merge_grid.items]
-        if len(paths) < 2:
-            messagebox.showwarning("Merge PDFs", "Select at least two PDF files.")
-            return
-
-        output_file = filedialog.asksaveasfilename(
-            title="Save merged PDF",
-            initialdir=paths[0].parent,
-            initialfile=f"{paths[0].stem}-merged.pdf",
-            defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf")]
-        )
-        if not output_file: return
-
-        if self.run_busy("Merge PDFs", lambda: mergepdf(pdf_paths=paths, output_file=output_file)) is None: return
-        self.set_status(f"✔  Merged PDF saved: {output_file}")
-        messagebox.showinfo("Success", f"Merged PDF saved:\n{output_file}")
-
-    # ==========================================================
-    # EDIT PAGES (re-order, rotate, delete, split, extract)
-    # ==========================================================
-
-    def build_pages_frame(self, frame):
-        self.section_title(frame, "Edit pages",
-                           "Drag pages into a new order, rotate or delete them, then save all, a selection, or split into several PDFs.")
-        self.pages_title, self.pages_info, tools = self.toolbar(frame, "＋  Add PDF", self.select_pages_file)
-        self.pages_title.configure(text="No PDF selected")
-        self.pages_info.configure(text="Adding a second PDF puts its pages at the end")
-
-        ctk.CTkLabel(tools, text="All pages", font=font(12), text_color=MUTED).pack(side="left", padx=(0, 8))
-        symbol_button(tools, "↺", lambda: self.pages_grid.rotate_all(-90)).pack(side="left", padx=2)
-        symbol_button(tools, "↻", lambda: self.pages_grid.rotate_all(90)).pack(side="left", padx=2)
-        small_button(tools, "⇄  Reverse", lambda: self.pages_grid.reverse(), width=80,
+        ctk.CTkLabel(tools, text="Show", font=font(12), text_color=MUTED).pack(side="left", padx=(0, 6))
+        self.view_toggle = SlideToggle(tools, [FILES_VIEW, PAGES_VIEW], command=self.set_view, height=32, bg=SUBCARD)
+        self.view_toggle.set(PAGES_VIEW)
+        self.view_toggle.pack(side="left", padx=(0, 14))
+        symbol_button(tools, "↺", lambda: self.pdf_grid.rotate_all(-90)).pack(side="left", padx=2)
+        symbol_button(tools, "↻", lambda: self.pdf_grid.rotate_all(90)).pack(side="left", padx=2)
+        small_button(tools, "⇄  Reverse", lambda: self.pdf_grid.reverse(), width=80,
                      font_=ctk.CTkFont(family=SYMBOL_FONT, size=13)).pack(side="left", padx=(8, 2))
-        small_button(tools, "Reset", self.reset_pages, width=56).pack(side="left", padx=2)
-        small_button(tools, "Clear", self.clear_pages, width=56).pack(side="left", padx=2)
+        small_button(tools, "Reset", self.reset_pdf, width=56).pack(side="left", padx=2)
+        small_button(tools, "Clear", self.clear_pdf, width=56).pack(side="left", padx=2)
 
-        bar, self.pages_summary = self.bottom_bar(frame)
-        primary_button(bar, "Save PDF", self.save_pages, width=200, height=48).pack(side="right")
-        self.pages_output = SlideToggle(bar, [ONE_PDF, EVERY_PAGE, CUSTOM_SPLIT], command=self.on_pages_output_change)
-        self.pages_output.pack(side="right", padx=16)
+        bar, self.pdf_summary = self.bottom_bar(frame)
+        primary_button(bar, "Save PDF", self.save_pdf, width=200, height=48).pack(side="right")
+        self.pdf_output = SlideToggle(bar, [ONE_PDF, EVERY_PAGE, CUSTOM_SPLIT], command=self.on_pdf_output_change)
+        self.pdf_output.pack(side="right", padx=16)
 
         # Extra row for "Custom split", only visible when that option is chosen
         self.custom_holder = tk.Frame(frame, bg=CARD, height=0)
@@ -302,169 +265,238 @@ class PDFToolApp:
         self.custom_entry = ctk.CTkEntry(self.custom_row, height=34, width=260, corner_radius=10, font=font(13),
                                          border_color=BORDER, placeholder_text="e.g. 1-3; 4-end")
         self.custom_entry.pack(side="left")
-        self.custom_entry.bind("<KeyRelease>", lambda event: self.update_pages_summary())
-        ctk.CTkLabel(self.custom_row, text="Use the page numbers shown on the tiles.  ';' starts a new PDF.  "
+        self.custom_entry.bind("<KeyRelease>", lambda event: self.update_pdf_summary())
+        ctk.CTkLabel(self.custom_row, text="Page numbers as shown in Pages view.  ';' starts a new PDF.  "
                                            "Pages you leave out are not saved.",
                      font=font(12), text_color=MUTED).pack(side="left", padx=12)
 
-        self.pages_grid = TileGrid(
-            frame, "Add a PDF to see its pages here.\nYou can also drag a PDF from Explorer into this window.",
-            on_change=self.update_pages_summary, rotatable=True,
+        self.pdf_grid = TileGrid(
+            frame, "Add one or more PDF files to get started.\nYou can also drag them from Explorer into this window.",
+            on_change=self.update_pdf_summary, rotatable=True, stacked=True,
         )
-        self.pages_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
+        self.pdf_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
 
-    def select_pages_file(self):
-        files = filedialog.askopenfilenames(title="Select PDF", filetypes=[("PDF files", "*.pdf")])
+    # ---------- the page list ----------
+
+    def current_pages(self):
+        """The pages in their current order and rotation, whatever the view."""
+        if self.pdf_view == PAGES_VIEW:
+            return [self._page(item, item["angle"]) for item in self.pdf_grid.items]
+        pages = []
+        for item in self.pdf_grid.items:
+            delta = item["angle"] - item["base_angle"]
+            pages.extend(self._page(page, page["angle"] + delta) for page in item["run"])
+        return pages
+
+    @staticmethod
+    def _page(page, angle):
+        return {"source": page["source"], "index": page["index"], "thumb": page["thumb"], "angle": angle % 360}
+
+    def show_pages(self, pages, view=None):
+        """Fill the grid with these pages, in the given (or current) view."""
+        if view is not None and view != self.pdf_view:
+            self.pdf_view = view
+            if self.view_toggle.get() != view:
+                self.view_toggle.set(view, animate=True)
+        self.pdf_grid.clear()
+        if self.pdf_view == PAGES_VIEW:
+            for page in pages:
+                self.pdf_grid.add(dict(page, title=f"Page {page['index'] + 1}"))
+        else:
+            for run in self._runs(pages):
+                first = run[0]
+                self.pdf_grid.add({
+                    "run": run, "source": first["source"], "thumb": first["thumb"],
+                    "angle": first["angle"], "base_angle": first["angle"],
+                    "pages": len(run), "title": first["source"].name,
+                })
+        self._update_labels()
+        self.pdf_grid.refresh()
+
+    @staticmethod
+    def _runs(pages):
+        """Group pages that follow each other and come from the same file."""
+        runs = []
+        for page in pages:
+            if runs and runs[-1][-1]["source"] == page["source"]:
+                runs[-1].append(page)
+            else:
+                runs.append([page])
+        return runs
+
+    def _update_labels(self):
+        """Titles, short subtitles and tooltips of the tiles."""
+        sources = list(dict.fromkeys(item["source"] for item in self.pdf_grid.items))
+        names = short_names(source.stem for source in sources)
+        several = len(sources) > 1
+        position = 1
+        for item in self.pdf_grid.items:
+            source = item["source"]
+            total = self.page_counts.get(source, 0)
+            if "run" in item:
+                count = len(item["run"])
+                first, last = item["run"][0]["index"] + 1, item["run"][-1]["index"] + 1
+                subtitle = f"p. {position}" if count == 1 else f"p. {position}-{position + count - 1}"
+                tooltip = f"{source.name}\n{plural(count, 'page')}" + (
+                    "" if count == total else f" (page {first}-{last} of {total})")
+                position += count
+            else:
+                title = f"Page {item['index'] + 1}"
+                subtitle = names[source.stem] if several else ""
+                tooltip = f"{source.name}\nPage {item['index'] + 1} of {total}"
+                if item.get("title") != title:
+                    item["title"] = title
+                position += 1
+            changed = item.get("subtitle") != subtitle or item.get("tooltip") != tooltip
+            item["subtitle"], item["tooltip"] = subtitle, tooltip
+            if changed and "frame" in item:
+                self.pdf_grid.update_tile(item)
+
+    # ---------- actions ----------
+
+    def select_pdf_files(self):
+        files = filedialog.askopenfilenames(title="Select PDF files", filetypes=[("PDF files", "*.pdf")])
         if files:
-            self.add_pages_files(files)
+            self.add_pdf_files(files)
 
-    def add_pages_files(self, files):
-        failed = []
+    def add_pdf_files(self, files):
+        files = sorted_paths(files)
+        was_empty = not self.pdf_grid.items
+        new_pages, failed = [], []
 
         def load():
-            for file in files:
-                path = Path(file)
+            for path in files:
                 try:
                     thumbs = page_thumbnails(path)
                 except Exception:
                     failed.append(path.name)
                     continue
+                self.page_counts[path] = len(thumbs)
                 for index, thumb in enumerate(thumbs):
-                    self.pages_original.append((path, index, thumb))
-                    self.pages_grid.add(self._page_item(path, index, thumb))
+                    new_pages.append({"source": path, "index": index, "thumb": thumb, "angle": 0})
 
-        self.run_busy("Edit pages", load)
-        self._update_page_subtitles()
-        self.pages_grid.refresh()
+        self.run_busy("Merge & edit PDF", load)
+        if new_pages:
+            self.pages_original.extend(dict(page) for page in new_pages)
+            # Several files: start with one tile per file; a single file: show its pages
+            view = (FILES_VIEW if len(files) - len(failed) > 1 else PAGES_VIEW) if was_empty else None
+            self.show_pages(self.current_pages() + new_pages, view)
         if failed:
-            messagebox.showwarning("Edit pages", "These files could not be opened as PDF:\n\n" + "\n".join(failed))
+            messagebox.showwarning("Merge & edit PDF", "These files could not be opened as PDF:\n\n" + "\n".join(failed))
 
-    @staticmethod
-    def _page_item(path, index, thumb):
-        return {"source": path, "index": index, "thumb": thumb, "title": f"Page {index + 1}"}
+    def set_view(self, view):
+        self.show_pages(self.current_pages(), view)
 
-    def _sources(self):
-        return list(dict.fromkeys(source for source, _, _ in self.pages_original))
-
-    def _update_page_subtitles(self):
-        """With pages from several PDFs, show on each tile which file it comes from."""
-        several = len(self._sources()) > 1
-        for item in self.pages_grid.items:
-            stem = item["source"].stem
-            subtitle = (stem if len(stem) <= 14 else stem[:13] + "…") if several else ""
-            if item.get("subtitle", "") != subtitle:
-                item["subtitle"] = subtitle
-                self.pages_grid.update_tile(item)
-
-    def reset_pages(self):
+    def reset_pdf(self):
         """Back to the pages as loaded: original order, no rotation, nothing deleted."""
-        if not self.pages_original: return
-        self.pages_grid.clear()
-        for path, index, thumb in self.pages_original:
-            self.pages_grid.add(self._page_item(path, index, thumb))
-        self._update_page_subtitles()
-        self.pages_grid.refresh()
+        if self.pages_original:
+            self.show_pages([dict(page) for page in self.pages_original])
 
-    def clear_pages(self):
+    def clear_pdf(self):
         self.pages_original = []
-        self.pages_grid.clear()
+        self.page_counts = {}
+        self.pdf_grid.clear()
 
-    def on_pages_output_change(self, value):
+    def on_pdf_output_change(self, value):
         if value == CUSTOM_SPLIT:
             self.custom_row.pack(fill="x", pady=(8, 0))
             self.custom_entry.focus_set()
         else:
             self.custom_row.pack_forget()
-        self.update_pages_summary()
+        self.update_pdf_summary()
 
-    def _page_groups(self):
+    def _page_groups(self, count):
         """List of page-number groups (1-based positions), one group per output PDF."""
-        count = len(self.pages_grid.items)
-        mode = self.pages_output.get()
+        mode = self.pdf_output.get()
         if mode == ONE_PDF:
             return [list(range(1, count + 1))]
         if mode == EVERY_PAGE:
             return [[n] for n in range(1, count + 1)]
         return parse_page_groups(self.custom_entry.get(), count)
 
-    def update_pages_summary(self):
-        items = self.pages_grid.items
-        sources = self._sources()
+    def update_pdf_summary(self):
+        if self.pdf_view == FILES_VIEW:
+            self._update_labels()   # page numbers on the file tiles change when files move
+        pages = self.current_pages()
+        sources = list(dict.fromkeys(page["source"] for page in self.pages_original))
         if sources:
-            name = sources[0].name + (f"  (+{plural(len(sources) - 1, 'more file')})" if len(sources) > 1 else "")
-            self.pages_title.configure(text=name)
+            more = f"  (+{plural(len(sources) - 1, 'more file')})" if len(sources) > 1 else ""
+            self.pdf_title.configure(text=sources[0].name + more)
         else:
-            self.pages_title.configure(text="No PDF selected")
+            self.pdf_title.configure(text="No PDF selected")
 
-        if not items:
-            self.pages_summary.configure(text="")
+        if not pages:
+            self.pdf_summary.configure(text="")
             return
 
-        rotated = sum(1 for item in items if item["angle"])
-        removed = len(self.pages_original) - len(items)
-        details = []
-        if rotated:
-            details.append(f"{rotated} rotated")
+        rotated = sum(1 for page in pages if page["angle"])
+        removed = len(self.pages_original) - len(pages)
+        details = [f"{rotated} rotated"] if rotated else []
         if removed > 0:
             details.append(f"{removed} deleted")
         details = f"   ({', '.join(details)})" if details else ""
 
         try:
-            groups = self._page_groups()
+            groups = self._page_groups(len(pages))
         except ValueError as error:
             text = "Enter pages like 1-3; 4-end" if not self.custom_entry.get().strip() else str(error)
-            self.pages_summary.configure(text=text, text_color=RED)
+            self.pdf_summary.configure(text=text, text_color=RED)
             return
 
         if len(groups) == 1:
-            pages = len(groups[0])
-            text = f"1 PDF with {plural(pages, 'page')}" + details
+            text = f"1 PDF with {plural(len(groups[0]), 'page')}" + details
         else:
             parts = " · ".join(format_page_ranges(group) for group in groups[:6])
             more = " · …" if len(groups) > 6 else ""
             text = f"{len(groups)} PDFs: {parts}{more}" + details
-        self.pages_summary.configure(text=text, text_color=GREEN if (rotated or removed > 0) else MUTED)
+        self.pdf_summary.configure(text=text, text_color=GREEN if (rotated or removed > 0) else MUTED)
 
-    def save_pages(self):
-        items = self.pages_grid.items
-        if not items:
-            messagebox.showwarning("Edit pages", "Add a PDF first.")
+    def save_pdf(self):
+        pages = self.current_pages()
+        if not pages:
+            messagebox.showwarning("Merge & edit PDF", "Add a PDF first.")
             return
         try:
-            groups = self._page_groups()
+            groups = self._page_groups(len(pages))
         except ValueError as error:
-            messagebox.showwarning("Edit pages", str(error))
+            messagebox.showwarning("Merge & edit PDF", str(error))
             return
 
-        stem = items[0]["source"].stem
-        folder = items[0]["source"].parent
-        page_groups = [[(items[n - 1]["source"], items[n - 1]["index"], items[n - 1]["angle"]) for n in group]
+        first = pages[0]["source"]
+        several_sources = len({page["source"] for page in pages}) > 1
+        page_groups = [[(pages[n - 1]["source"], pages[n - 1]["index"], pages[n - 1]["angle"]) for n in group]
                        for group in groups]
-        mode = self.pages_output.get()
+        mode = self.pdf_output.get()
 
         if len(groups) == 1:
-            default = f"{stem}-edited.pdf" if mode == ONE_PDF else f"{stem}_pages_{format_page_ranges(groups[0])}.pdf"
+            if mode == ONE_PDF:
+                default = f"{first.stem}-merged.pdf" if several_sources else f"{first.stem}-edited.pdf"
+            else:
+                default = f"{first.stem}_pages_{format_page_ranges(groups[0])}.pdf"
             output_file = filedialog.asksaveasfilename(
-                title="Save PDF", initialdir=folder, initialfile=default,
+                title="Save PDF", initialdir=first.parent, initialfile=default,
                 defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")]
             )
             if not output_file: return
-            if self.run_busy("Edit pages", lambda: write_pages(page_groups[0], output_file)) is None: return
+            if self.run_busy("Save PDF", lambda: write_pages(page_groups[0], output_file)) is None: return
             self.set_status(f"✔  Saved: {output_file}")
             messagebox.showinfo("Success", f"Saved:\n{output_file}")
             return
 
-        output_folder = filedialog.askdirectory(title=f"Folder for the {len(groups)} PDF files", initialdir=folder)
+        output_folder = filedialog.askdirectory(title=f"Folder for the {len(groups)} PDF files", initialdir=first.parent)
         if not output_folder: return
         output_folder = Path(output_folder)
 
         output_files = []
         for group in groups:
-            name = (f"{stem}_page_{group[0]:03d}.pdf" if mode == EVERY_PAGE
-                    else f"{stem}_pages_{format_page_ranges(group)}.pdf")
+            if mode == EVERY_PAGE:
+                page = pages[group[0] - 1]
+                name = f"{page['source'].stem}_page_{page['index'] + 1:03d}.pdf"
+            else:
+                name = f"{first.stem}_pages_{format_page_ranges(group)}.pdf"
             output_files.append(unique_path(output_folder / name, output_files))
 
-        if self.run_busy("Edit pages", lambda: write_page_groups(page_groups, output_files)) is None: return
+        if self.run_busy("Save PDF", lambda: write_page_groups(page_groups, output_files)) is None: return
         self.set_status(f"✔  {len(output_files)} PDF files saved to: {output_folder}")
         messagebox.showinfo("Success", f"{len(output_files)} PDF files saved to:\n{output_folder}")
 
@@ -507,10 +539,10 @@ class PDFToolApp:
         failed = []
 
         def load():
-            for file in files:
-                path = Path(file)
+            for path in sorted_paths(files):
                 try:
-                    item = {"path": path, "title": path.name, "thumb": thumbnail(path), "pages": page_count(path)}
+                    item = {"path": path, "title": path.name, "tooltip": f"{path.name}\n{path.parent}",
+                            "thumb": thumbnail(path), "pages": page_count(path)}
                 except Exception:
                     failed.append(path.name)
                     continue
@@ -591,15 +623,17 @@ class PDFToolApp:
 
     def handle_dropped_files(self, paths):
         """
-        PDFs go to the current screen (or Merge PDF when you're on Image to PDF),
-        images always go to Image to PDF. Folders are opened (not their sub-folders).
+        PDFs go to Merge & Edit PDF, images to Image to PDF.
+        Folders are opened (not their sub-folders). Files are added in
+        alphabetical order, whichever file you started dragging.
         """
         files = []
         for path in map(Path, paths):
             if path.is_dir():
-                files.extend(sorted((p for p in path.iterdir() if p.is_file()), key=natural_key))
+                files.extend(p for p in path.iterdir() if p.is_file())
             elif path.is_file():
                 files.append(path)
+        files = sorted_paths(files)
 
         pdfs = [f for f in files if is_pdf(f)]
         images = [f for f in files if is_image(f)]
@@ -607,16 +641,12 @@ class PDFToolApp:
 
         messages = []
         if pdfs:
-            target = self.current_mode() if self.current_mode() in ("Merge PDF", "Edit Pages") else "Merge PDF"
-            self.show_mode(target)
-            if target == "Merge PDF":
-                self.add_merge_files(pdfs)
-            else:
-                self.add_pages_files(pdfs)
-            messages.append(f"{plural(len(pdfs), 'PDF')} added to {target}")
+            self.show_mode(PDF_MODE)
+            self.add_pdf_files(pdfs)
+            messages.append(f"{plural(len(pdfs), 'PDF')} added")
         if images:
             if not pdfs:
-                self.show_mode("Image to PDF")
+                self.show_mode(IMAGE_MODE)
             self.add_image_files(images)
             messages.append(f"{plural(len(images), 'image')} added to Image to PDF")
 
