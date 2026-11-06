@@ -1,5 +1,5 @@
 """
-Page previews for the Rotate screen.
+Page previews for the tiles in the app.
 
 If PyMuPDF is installed (`pip install pymupdf`) the real page content is shown.
 Otherwise a simple drawn page is shown, with the right proportions and
@@ -22,30 +22,40 @@ def has_real_previews():
     return pymupdf is not None
 
 
-def page_thumbnails(pdf_path):
+def page_thumbnails(pdf_path, max_pages=None):
     """Return a list of PIL images, one per page, in the current orientation."""
     if pymupdf is not None:
         try:
-            return _rendered_thumbnails(pdf_path)
+            return _rendered_thumbnails(pdf_path, max_pages)
         except Exception:
             pass  # fall back to drawn pages
-    return _drawn_thumbnails(pdf_path)
+    return _drawn_thumbnails(pdf_path, max_pages)
 
 
-def _rendered_thumbnails(pdf_path):
+def first_page_thumbnail(pdf_path):
+    return page_thumbnails(pdf_path, max_pages=1)[0]
+
+
+def pdf_page_count(pdf_path):
+    return len(PdfReader(pdf_path).pages)
+
+
+def _rendered_thumbnails(pdf_path, max_pages=None):
     images = []
     with pymupdf.open(pdf_path) as doc:
-        for page in doc:
+        for number, page in enumerate(doc):
+            if max_pages is not None and number >= max_pages:
+                break
             zoom = THUMB_SIZE / max(page.rect.width, page.rect.height)
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
             images.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
     return images
 
 
-def _drawn_thumbnails(pdf_path):
+def _drawn_thumbnails(pdf_path, max_pages=None):
     reader = PdfReader(pdf_path)
     images = []
-    for page in reader.pages:
+    for page in reader.pages[:max_pages]:
         width, height = float(page.mediabox.width), float(page.mediabox.height)
         if (page.rotation or 0) % 180 == 90:
             width, height = height, width

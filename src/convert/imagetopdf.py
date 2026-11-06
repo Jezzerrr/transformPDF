@@ -5,17 +5,26 @@ from pathlib import Path
 from PIL import Image, ImageOps
 from pypdf import PdfWriter
 
+try:
+    # HEIC/HEIF: the default photo format of iPhones
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    HEIC_SUPPORT = True
+except ImportError:
+    HEIC_SUPPORT = False
+
 
 # Image types that can be converted to PDF.
 #  - Photos, scans and screenshots: jpg/jpeg/jfif, png, bmp, tif/tiff, webp, avif
+#  - iPhone photos: heic/heif (needs the pillow-heif package)
 #  - gif: only the first frame is used (animations can't live in a PDF)
 #  - Multi-page tif files become multiple PDF pages
-# Not accepted: svg (vector, Pillow can't read it), heic (iPhone photos, needs an
-# extra package), psd/raw camera files and ico (icons), which rarely make sense as PDF.
+# Not accepted: svg (vector, Pillow can't read it), psd/raw camera files and
+# ico (icons), which rarely make sense as PDF.
 IMAGE_EXTENSIONS = (
     ".jpg", ".jpeg", ".jfif", ".png", ".bmp",
     ".gif", ".tif", ".tiff", ".webp", ".avif",
-)
+) + ((".heic", ".heif") if HEIC_SUPPORT else ())
 
 A4_LONG_SIDE_INCH = 11.69
 JPEG_QUALITY = 95
