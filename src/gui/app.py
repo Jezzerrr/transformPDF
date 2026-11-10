@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 from pathlib import Path
 
 import tkinter as tk
@@ -24,6 +25,10 @@ try:
 except ImportError:
     TkinterDnD = None
 
+
+# Folder with the program's own files (images). Inside the packaged .exe
+# PyInstaller unpacks them to a temporary folder (sys._MEIPASS).
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("green")
@@ -98,7 +103,7 @@ class PDFToolApp:
     def __init__(self):
         self.root = AppWindow(fg_color=BG)
 
-        self.root.iconbitmap(Path("images/logoTU_icon.ico"))
+        self.root.iconbitmap(BASE_DIR / "images" / "logoTU_icon.ico")
         self.root.title("Transform PDF")
         self.root.geometry("1200x760")
         self.root.minsize(1100, 660)
@@ -139,7 +144,7 @@ class PDFToolApp:
         inner = ctk.CTkFrame(header, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=28)
 
-        logo = Image.open(Path("images/logoTU.png"))
+        logo = Image.open(BASE_DIR / "images" / "logoTU.png")
         logo_height = 58
         logo_width = int(logo.width * logo_height / logo.height)
         self.logo_image = ctk.CTkImage(light_image=logo, size=(logo_width, logo_height))
