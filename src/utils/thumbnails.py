@@ -32,6 +32,20 @@ def page_thumbnails(pdf_path, max_pages=None):
     return _drawn_thumbnails(pdf_path, max_pages)
 
 
+def render_page(pdf_path, index, size=1600):
+    """One page as a big image (longest side `size` pixels), for the large view."""
+    if pymupdf is not None:
+        try:
+            with pymupdf.open(pdf_path) as doc:
+                page = doc[index]
+                zoom = size / max(page.rect.width, page.rect.height)
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        except Exception:
+            pass
+    return _drawn_thumbnails(pdf_path, index + 1)[index]
+
+
 def first_page_thumbnail(pdf_path):
     return page_thumbnails(pdf_path, max_pages=1)[0]
 

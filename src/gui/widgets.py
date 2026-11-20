@@ -306,7 +306,7 @@ class TileGrid(ctk.CTkScrollableFrame):
     (if rotatable) rotated with ↺ ↻. on_change() is called after every change.
     """
 
-    def __init__(self, master, placeholder, on_change=None, rotatable=True, stacked=False):
+    def __init__(self, master, placeholder, on_change=None, rotatable=True, stacked=False, on_open=None):
         super().__init__(
             master, fg_color="transparent", corner_radius=0,
             scrollbar_button_color="#C3D1E6", scrollbar_button_hover_color="#A9BBD6",
@@ -316,6 +316,7 @@ class TileGrid(ctk.CTkScrollableFrame):
         self.rotatable = rotatable
         self.stacked = stacked
         self.on_change = on_change or (lambda: None)
+        self.on_open = on_open          # called with the item when a preview is clicked
 
         self._parent_canvas.bind("<Configure>", lambda event: self.layout(), add="+")
 
@@ -422,7 +423,7 @@ class TileGrid(ctk.CTkScrollableFrame):
                                     width=TILE_WIDTH - 16, height=PREVIEW_BOX + 12)
         preview_area.pack(padx=8, pady=4)
         preview_area.pack_propagate(False)
-        image_label = ctk.CTkLabel(preview_area, text="", cursor="fleur")
+        image_label = ctk.CTkLabel(preview_area, text="", cursor="hand2" if self.on_open else "fleur")
         image_label.pack(expand=True)
 
         title_label = ctk.CTkLabel(tile, text="", font=font(11, "bold"), text_color=TEXT, height=16)
@@ -445,12 +446,14 @@ class TileGrid(ctk.CTkScrollableFrame):
 
         # Drag to re-order: grab the tile anywhere except on its buttons
         for widget in (tile, preview_area, image_label, title_label, info_label, top, controls):
-            widget.bind("<ButtonPress-1>", lambda event: self._drag_start(event, item), add="+")
+            is_preview = widget is image_label
+            widget.bind("<ButtonPress-1>", lambda event, p=is_preview: self._drag_start(event, item, p), add="+")
             widget.bind("<B1-Motion>", self._drag_motion, add="+")
             widget.bind("<ButtonRelease-1>", self._drag_end, add="+")
 
+        hint = "\n\nClick to enlarge  ·  drag to move" if self.on_open else ""
         for widget in (image_label, title_label, info_label):
-            self.tooltip.attach(widget, lambda: item["tooltip"])
+            self.tooltip.attach(widget, lambda: item["tooltip"] + hint)
 
         item.update(frame=tile, image_label=image_label, title_label=title_label, info_label=info_label)
         self.update_tile(item)
@@ -476,8 +479,9 @@ class TileGrid(ctk.CTkScrollableFrame):
 
     # ---------- drag & drop re-ordering ----------
 
-    def _drag_start(self, event, item):
-        self._drag = {"item": item, "x": event.x_root, "y": event.y_root, "active": False, "target": None}
+    def _drag_start(self, event, item, on_preview=False):
+        self._drag = {"item": item, "x": event.x_root, "y": event.y_root, "active": False, "target": None,
+                      "preview": on_preview}
 
     def _drag_motion(self, event):
         drag = self._drag
@@ -498,7 +502,13 @@ class TileGrid(ctk.CTkScrollableFrame):
 
     def _drag_end(self, event):
         drag, self._drag = self._drag, None
-        if not drag or not drag["active"]:
+        if not drag:
+            return
+        if not drag["active"]:
+            # a click without moving: on the preview it opens the large view
+            if drag["preview"] and self.on_open and drag["item"] in self.items:
+                self.tooltip.hide()
+                self.on_open(drag["item"])
             return
         drag["ghost"].destroy()
         self.marker.place_forget()

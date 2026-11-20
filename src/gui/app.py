@@ -12,7 +12,8 @@ from PIL import Image
 from src.convert.imagetopdf import imagetopdf, imagestopdfs, thumbnail, page_count, IMAGE_EXTENSIONS
 from src.modify.organize import write_pages, write_page_groups, unique_path
 from src.utils.page_ranges import parse_page_groups, format_page_ranges
-from src.utils.thumbnails import page_thumbnails, has_real_previews
+from src.utils.thumbnails import page_thumbnails, render_page, has_real_previews
+from src.gui.overlays import Toast, PageViewer
 from src.gui.widgets import (
     BG, CARD, SUBCARD, BORDER, GREEN, NAVY, TEXT, MUTED, RED, GREEN_LIGHT, GREEN_HOVER,
     LIGHT_FONT, SYMBOL_FONT,
@@ -32,6 +33,8 @@ BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("green")
+
+HEADER_HEIGHT = 100     # white header + green line
 
 PDF_MODE = "Merge & Edit PDF"
 IMAGE_MODE = "Image to PDF"
@@ -113,6 +116,8 @@ class PDFToolApp:
         self.page_counts = {}        # source path -> number of pages in that file
         self.pdf_view = PAGES_VIEW
 
+        self.toast = Toast(self.root)
+        self.viewer = PageViewer(self.root, top=HEADER_HEIGHT)
         self.create_widgets()
         self.show_mode(MODES[0])
         self.setup_file_drop()
@@ -136,7 +141,7 @@ class PDFToolApp:
         self.status_label.pack(fill="x", padx=32, pady=(0, 8))
 
     def build_header(self):
-        header = ctk.CTkFrame(self.root, fg_color=CARD, corner_radius=0, height=96)
+        header = ctk.CTkFrame(self.root, fg_color=CARD, corner_radius=0, height=HEADER_HEIGHT - 4)
         header.pack(fill="x")
         header.pack_propagate(False)
         ctk.CTkFrame(self.root, fg_color=GREEN, corner_radius=0, height=4).pack(fill="x")
@@ -179,6 +184,7 @@ class PDFToolApp:
         return self.mode_switch.get()
 
     def show_mode(self, mode):
+        self.viewer.close()
         for frame in self.mode_frames.values():
             frame.pack_forget()
         self.mode_frames[mode].pack(fill="both", expand=True)
@@ -188,6 +194,19 @@ class PDFToolApp:
 
     def set_status(self, text):
         self.status_label.configure(text=text)
+
+    def notify(self, title, message="", kind="success", file=None, folder=None):
+        """Floating message bottom-right that disappears by itself (instead of an OK pop-up)."""
+        self.toast.show(title, message, kind=kind, file=file, folder=folder)
+
+    def saved_one(self, output_file):
+        path = Path(output_file)
+        self.set_status(f"✔  Saved: {path}")
+        self.notify("PDF saved", f"{path.name}\nin {path.parent}", file=path, folder=path.parent)
+
+    def saved_many(self, count, folder):
+        self.set_status(f"✔  {count} PDF files saved to: {folder}")
+        self.notify(f"{count} PDF files saved", f"in {folder}", folder=folder)
 
     def section_title(self, frame, title, subtitle):
         ctk.CTkLabel(frame, text=title, font=heading(22), text_color=NAVY).pack(anchor="w", padx=28, pady=(22, 0))
@@ -277,7 +296,7 @@ class PDFToolApp:
 
         self.pdf_grid = TileGrid(
             frame, "Add one or more PDF files to get started.\nYou can also drag them from Explorer into this window.",
-            on_change=self.update_pdf_summary, rotatable=True, stacked=True,
+            on_change=self.update_pdf_summary, rotatable=True, stacked=True, on_open=self.open_pdf_viewer,
         )
         self.pdf_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
 
@@ -357,6 +376,29 @@ class PDFToolApp:
             if changed and "frame" in item:
                 self.pdf_grid.update_tile(item)
 
+    # ---------- large view ----------
+
+    def open_pdf_viewer(self, item):
+        grid = self.pdf_grid
+
+        def get_image(item):
+            page = item["run"][0] if "run" in item else item
+            return render_page(page["source"], page["index"])
+
+        def describe(item, position, count):
+            source = item["source"]
+            total = self.page_counts.get(source, 0)
+            turned = {0: "", 90: "  ·  rotated 90° right", 180: "  ·  rotated 180°", 270: "  ·  rotated 90° left"}[item["angle"]]
+            if "run" in item:
+                pages = len(item["run"])
+                return (source.name,
+                        f"{item['subtitle']} in the new PDF  ·  {plural(pages, 'page')}  ·  showing the first page{turned}")
+            return (f"Page {position} of {count}",
+                    f"From {source.name}, page {item['index'] + 1} of {total}{turned}")
+
+        label = "Remove file" if self.pdf_view == FILES_VIEW else "Delete page"
+        self.viewer.open(grid.items, item, get_image, describe, grid.rotate, grid.remove, delete_label=label)
+
     # ---------- actions ----------
 
     def select_pdf_files(self):
@@ -387,7 +429,7 @@ class PDFToolApp:
             view = (FILES_VIEW if len(files) - len(failed) > 1 else PAGES_VIEW) if was_empty else None
             self.show_pages(self.current_pages() + new_pages, view)
         if failed:
-            messagebox.showwarning("Merge & edit PDF", "These files could not be opened as PDF:\n\n" + "\n".join(failed))
+            self.notify("Some files could not be opened", "\n".join(failed), kind="warning")
 
     def set_view(self, view):
         self.show_pages(self.current_pages(), view)
@@ -459,12 +501,12 @@ class PDFToolApp:
     def save_pdf(self):
         pages = self.current_pages()
         if not pages:
-            messagebox.showwarning("Merge & edit PDF", "Add a PDF first.")
+            self.notify("Nothing to save yet", "Add a PDF first.", kind="warning")
             return
         try:
             groups = self._page_groups(len(pages))
         except ValueError as error:
-            messagebox.showwarning("Merge & edit PDF", str(error))
+            self.notify("Check the page numbers", str(error), kind="warning")
             return
 
         first = pages[0]["source"]
@@ -484,8 +526,7 @@ class PDFToolApp:
             )
             if not output_file: return
             if self.run_busy("Save PDF", lambda: write_pages(page_groups[0], output_file)) is None: return
-            self.set_status(f"✔  Saved: {output_file}")
-            messagebox.showinfo("Success", f"Saved:\n{output_file}")
+            self.saved_one(output_file)
             return
 
         output_folder = filedialog.askdirectory(title=f"Folder for the {len(groups)} PDF files", initialdir=first.parent)
@@ -502,8 +543,7 @@ class PDFToolApp:
             output_files.append(unique_path(output_folder / name, output_files))
 
         if self.run_busy("Save PDF", lambda: write_page_groups(page_groups, output_files)) is None: return
-        self.set_status(f"✔  {len(output_files)} PDF files saved to: {output_folder}")
-        messagebox.showinfo("Success", f"{len(output_files)} PDF files saved to:\n{output_folder}")
+        self.saved_many(len(output_files), output_folder)
 
     # ==========================================================
     # IMAGE TO PDF
@@ -530,7 +570,7 @@ class PDFToolApp:
 
         self.image_grid = TileGrid(
             frame, "Add one or more images to get started.\nYou can also drag them from Explorer into this window.",
-            on_change=self.update_image_summary, rotatable=True, stacked=True,
+            on_change=self.update_image_summary, rotatable=True, stacked=True, on_open=self.open_image_viewer,
         )
         self.image_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
 
@@ -556,7 +596,17 @@ class PDFToolApp:
         self.run_busy("Image to PDF", load)
         self.image_grid.refresh()
         if failed:
-            messagebox.showwarning("Image to PDF", "These files could not be opened as an image:\n\n" + "\n".join(failed))
+            self.notify("Some files could not be opened", "\n".join(failed), kind="warning")
+
+    def open_image_viewer(self, item):
+        grid = self.image_grid
+
+        def describe(item, position, count):
+            extra = f"  ·  {plural(item['pages'], 'page')}" if item["pages"] > 1 else ""
+            return f"Image {position} of {count}", f"{item['path'].name}  ·  {item['path'].parent}{extra}"
+
+        self.viewer.open(grid.items, item, lambda item: thumbnail(item["path"], size=1600), describe,
+                         grid.rotate, grid.remove, delete_label="Remove image")
 
     def update_image_summary(self):
         items = self.image_grid.items
@@ -574,7 +624,7 @@ class PDFToolApp:
     def save_images_as_pdf(self):
         items = self.image_grid.items
         if not items:
-            messagebox.showwarning("Image to PDF", "Add at least one image first.")
+            self.notify("Nothing to convert yet", "Add at least one image first.", kind="warning")
             return
 
         paths = [item["path"] for item in items]
@@ -589,15 +639,13 @@ class PDFToolApp:
             )
             if not output_file: return
             if self.run_busy("Image to PDF", lambda: imagetopdf(paths, output_file, rotations)) is None: return
-            self.set_status(f"✔  PDF saved: {output_file}")
-            messagebox.showinfo("Success", f"PDF saved:\n{output_file}")
+            self.saved_one(output_file)
         else:
             output_folder = filedialog.askdirectory(title="Folder for the PDF files", initialdir=first.parent)
             if not output_folder: return
             created = self.run_busy("Image to PDF", lambda: imagestopdfs(paths, output_folder, rotations))
             if created is None: return
-            self.set_status(f"✔  {len(created)} PDF files saved to: {output_folder}")
-            messagebox.showinfo("Success", f"{len(created)} PDF files saved to:\n{output_folder}")
+            self.saved_many(len(created), output_folder)
 
     # ==========================================================
     # DRAG FILES IN FROM EXPLORER
@@ -658,8 +706,8 @@ class PDFToolApp:
         if messages:
             self.set_status("✔  " + ";  ".join(messages))
         if ignored:
-            shown = "\n".join(ignored[:15]) + ("\n…" if len(ignored) > 15 else "")
-            messagebox.showwarning("Not added", "These files are not a PDF or a supported image:\n\n" + shown)
+            shown = "\n".join(ignored[:8]) + ("\n…" if len(ignored) > 8 else "")
+            self.notify("Some files were not added", "Not a PDF or a supported image:\n" + shown, kind="warning")
 
     def run(self):
         if not has_real_previews():
