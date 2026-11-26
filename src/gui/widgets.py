@@ -32,6 +32,16 @@ LOGO_RED = "#D7263D"     # logo red
 TEXT = "#1F1F1F"
 MUTED = "#6B6B6B"
 RED = "#C21F35"          # error text
+# very light tints of the logo colours, for hover effects
+YELLOW_LIGHT = "#FBF0D4"
+RED_LIGHT = "#F9DFE3"
+# colour per source file (badges on the tiles)
+FILE_COLOURS = [ACCENT, LOGO_RED, YELLOW, INK]
+
+
+def text_on(colour):
+    """White text, except on yellow (too little contrast): black."""
+    return INK if colour == YELLOW else "white"
 
 HEADING_FONT = "Bahnschrift SemiBold"
 LIGHT_FONT = "Bahnschrift Light"
@@ -67,17 +77,18 @@ def secondary_button(parent, text, command, height=36, **kwargs):
     )
 
 
-def small_button(parent, text, command, width=34, font_=None, text_color=TEXT):
+def small_button(parent, text, command, width=34, font_=None, text_color=TEXT, hover=ACCENT_LIGHT):
     return ctk.CTkButton(
         parent, text=text, command=command, width=width, height=30, corner_radius=8,
-        fg_color=SUBCARD, hover_color=ACCENT_LIGHT, text_color=text_color,
+        fg_color=SUBCARD, hover_color=hover, text_color=text_color,
         font=font_ or font(13),
     )
 
 
-def symbol_button(parent, text, command, size=17, color=ACCENT):
+def symbol_button(parent, text, command, size=17, color=ACCENT, hover=ACCENT_LIGHT):
     """Small square button with a symbol such as ↺ ↻ ◀ ▶."""
-    return small_button(parent, text, command, font_=ctk.CTkFont(family=SYMBOL_FONT, size=size), text_color=color)
+    return small_button(parent, text, command, font_=ctk.CTkFont(family=SYMBOL_FONT, size=size),
+                        text_color=color, hover=hover)
 
 
 def card(parent, **kwargs):
@@ -109,7 +120,7 @@ class SlideToggle(tk.Canvas):
     it to another option; it snaps into place when you let go.
     """
 
-    def __init__(self, master, values, command=None, height=38, bg=CARD):
+    def __init__(self, master, values, command=None, height=38, bg=CARD, knob_colours=None):
         self.scaling = ctk.ScalingTracker.get_widget_scaling(master)
         self.values = list(values)
         self.command = command
@@ -126,9 +137,12 @@ class SlideToggle(tk.Canvas):
 
         knob_h = self.h - 2 * self.pad
         self._track_img = ImageTk.PhotoImage(_rounded_image(self.w, self.h, self.h // 2, SUBCARD, BORDER))
-        self._knob_img = ImageTk.PhotoImage(_rounded_image(self.segment, knob_h, knob_h // 2, INK))
+        # the knob takes a different logo colour for every option
+        self.knob_colours = list(knob_colours or [INK] * len(self.values))
+        self._knob_imgs = {colour: ImageTk.PhotoImage(_rounded_image(self.segment, knob_h, knob_h // 2, colour))
+                           for colour in set(self.knob_colours)}
         self.create_image(0, 0, image=self._track_img, anchor="nw")
-        self.knob = self.create_image(self._knob_x(0), self.pad, image=self._knob_img, anchor="nw")
+        self.knob = self.create_image(self._knob_x(0), self.pad, image=self._knob_imgs[self.knob_colours[0]], anchor="nw")
         self.labels = [
             self.create_text(self._knob_x(i) + self.segment / 2, self.h / 2, text=value, font=self.text_font)
             for i, value in enumerate(self.values)
@@ -150,8 +164,10 @@ class SlideToggle(tk.Canvas):
         return min(range(len(self.values)), key=lambda i: abs(self._knob_x(i) - knob_x))
 
     def _color_labels(self, active):
+        colour = self.knob_colours[active]
+        self.itemconfigure(self.knob, image=self._knob_imgs[colour])
         for i, label in enumerate(self.labels):
-            self.itemconfigure(label, fill="white" if i == active else TEXT)
+            self.itemconfigure(label, fill=text_on(colour) if i == active else TEXT)
 
     def get(self):
         return self.values[self.index]
@@ -309,7 +325,8 @@ class TileGrid(ctk.CTkScrollableFrame):
     (if rotatable) rotated with ↺ ↻. on_change() is called after every change.
     """
 
-    def __init__(self, master, placeholder, on_change=None, rotatable=True, stacked=False, on_open=None):
+    def __init__(self, master, placeholder, on_change=None, rotatable=True, stacked=False, on_open=None,
+                 placeholder_image=None):
         super().__init__(
             master, fg_color="transparent", corner_radius=0,
             scrollbar_button_color="#D8D2C6", scrollbar_button_hover_color="#BDB5A6",
@@ -323,7 +340,15 @@ class TileGrid(ctk.CTkScrollableFrame):
 
         self._parent_canvas.bind("<Configure>", lambda event: self.layout(), add="+")
 
-        self.placeholder = ctk.CTkLabel(self, text=placeholder, font=font(14), text_color=MUTED, justify="left")
+        # empty state: a faint PLOOI icon next to the hint text
+        self.placeholder = ctk.CTkFrame(self, fg_color="transparent")
+        if placeholder_image is not None:
+            faded = placeholder_image.copy()
+            faded.putalpha(faded.getchannel("A").point(lambda a: int(a * 0.55)))
+            self._placeholder_image = ctk.CTkImage(light_image=faded, size=(72, 72))
+            ctk.CTkLabel(self.placeholder, text="", image=self._placeholder_image).pack(side="left", padx=(0, 18))
+        ctk.CTkLabel(self.placeholder, text=placeholder, font=font(14), text_color=MUTED,
+                     justify="left").pack(side="left")
         self.placeholder.grid(row=0, column=0, padx=10, pady=60, sticky="w")
 
         self.marker = ctk.CTkFrame(self, width=5, height=PREVIEW_BOX, fg_color=ACCENT, corner_radius=3)
@@ -387,7 +412,8 @@ class TileGrid(ctk.CTkScrollableFrame):
         else:
             self.placeholder.grid(row=0, column=0, padx=10, pady=60, sticky="w")
         for number, item in enumerate(self.items, start=1):
-            item["number_label"].configure(text=str(number))
+            colour = item.get("colour", INK)
+            item["number_label"].configure(text=str(number), fg_color=colour, text_color=text_on(colour))
         self.columns = 0
         self.layout()
         self.on_change()
@@ -419,7 +445,7 @@ class TileGrid(ctk.CTkScrollableFrame):
                                             fg_color=INK, text_color="white", font=font(11, "bold"))
         item["number_label"].pack(side="left")
         ctk.CTkButton(top, text="✕", width=24, height=22, corner_radius=8, fg_color="transparent",
-                      hover_color="#FDE2E2", text_color=MUTED, font=font(12),
+                      hover_color=RED_LIGHT, text_color=MUTED, font=font(12),
                       command=lambda: self.remove(item)).pack(side="right")
 
         preview_area = ctk.CTkFrame(tile, fg_color=PREVIEW_BG, corner_radius=10,
@@ -439,8 +465,10 @@ class TileGrid(ctk.CTkScrollableFrame):
         if self.rotatable:
             controls.columnconfigure((0, 1, 2, 3), weight=1)
             symbol_button(controls, "↺", lambda: self.rotate(item, -90)).grid(row=0, column=0, sticky="w")
-            symbol_button(controls, "◀", lambda: self.move(item, -1), size=12, color=TEXT).grid(row=0, column=1)
-            symbol_button(controls, "▶", lambda: self.move(item, 1), size=12, color=TEXT).grid(row=0, column=2)
+            symbol_button(controls, "◀", lambda: self.move(item, -1), size=12, color=TEXT,
+                          hover=YELLOW_LIGHT).grid(row=0, column=1)
+            symbol_button(controls, "▶", lambda: self.move(item, 1), size=12, color=TEXT,
+                          hover=YELLOW_LIGHT).grid(row=0, column=2)
             symbol_button(controls, "↻", lambda: self.rotate(item, 90)).grid(row=0, column=3, sticky="e")
         else:
             controls.columnconfigure((0, 1), weight=1)

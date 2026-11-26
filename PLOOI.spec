@@ -8,6 +8,7 @@ NAME = "PLOOI-debug" if DEBUG else "PLOOI"
 datas = [
     ("images/logo/plooi-logo.png", "images/logo"),
     ("images/logo/plooi.ico", "images/logo"),
+    ("images/logo/plooi-icon.png", "images/logo"),   # faint icon on empty screens
 ]
 binaries = []
 hiddenimports = []

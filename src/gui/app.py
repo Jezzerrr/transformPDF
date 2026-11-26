@@ -16,6 +16,7 @@ from src.utils.thumbnails import page_thumbnails, render_page, has_real_previews
 from src.gui.overlays import Toast, PageViewer
 from src.gui.widgets import (
     BG, CARD, SUBCARD, BORDER, ACCENT, INK, TEXT, MUTED, RED, ACCENT_LIGHT, ACCENT_HOVER, YELLOW, LOGO_RED,
+    YELLOW_LIGHT, RED_LIGHT, FILE_COLOURS,
     LIGHT_FONT, SYMBOL_FONT,
     font, heading, primary_button, secondary_button, small_button, symbol_button, card, plural,
     SlideToggle, TileGrid,
@@ -116,6 +117,7 @@ class PDFToolApp:
         self.page_counts = {}        # source path -> number of pages in that file
         self.pdf_view = PAGES_VIEW
 
+        self.icon_image = Image.open(BASE_DIR / "images" / "logo" / "plooi-icon.png")
         self.toast = Toast(self.root)
         self.viewer = PageViewer(self.root, top=HEADER_HEIGHT)
         self.create_widgets()
@@ -211,7 +213,12 @@ class PDFToolApp:
         self.notify(f"{count} PDF files saved", f"in {folder}", folder=folder)
 
     def section_title(self, frame, title, subtitle):
-        ctk.CTkLabel(frame, text=title, font=heading(22), text_color=INK).pack(anchor="w", padx=28, pady=(22, 0))
+        # small echo of the colour stripe under the header
+        stripe = ctk.CTkFrame(frame, fg_color="transparent")
+        stripe.pack(anchor="w", padx=30, pady=(22, 6))
+        for colour in (INK, YELLOW, LOGO_RED, ACCENT):
+            ctk.CTkFrame(stripe, fg_color=colour, width=14, height=4, corner_radius=0).pack(side="left")
+        ctk.CTkLabel(frame, text=title, font=heading(22), text_color=INK).pack(anchor="w", padx=28)
         ctk.CTkLabel(frame, text=subtitle, font=font(13), text_color=MUTED).pack(anchor="w", padx=28, pady=(0, 14))
 
     def toolbar(self, frame, button_text, command):
@@ -268,19 +275,21 @@ class PDFToolApp:
         self.pdf_info.configure(text="Tip: you can also drag PDF files into this window")
 
         ctk.CTkLabel(tools, text="Show", font=font(12), text_color=MUTED).pack(side="left", padx=(0, 6))
-        self.view_toggle = SlideToggle(tools, [FILES_VIEW, PAGES_VIEW], command=self.set_view, height=32, bg=SUBCARD)
+        self.view_toggle = SlideToggle(tools, [FILES_VIEW, PAGES_VIEW], command=self.set_view, height=32, bg=SUBCARD,
+                                       knob_colours=[YELLOW, INK])
         self.view_toggle.set(PAGES_VIEW)
         self.view_toggle.pack(side="left", padx=(0, 14))
         symbol_button(tools, "↺", lambda: self.pdf_grid.rotate_all(-90)).pack(side="left", padx=2)
         symbol_button(tools, "↻", lambda: self.pdf_grid.rotate_all(90)).pack(side="left", padx=2)
-        small_button(tools, "⇄  Reverse", lambda: self.pdf_grid.reverse(), width=80,
+        small_button(tools, "⇄  Reverse", lambda: self.pdf_grid.reverse(), width=80, hover=YELLOW_LIGHT,
                      font_=ctk.CTkFont(family=SYMBOL_FONT, size=13)).pack(side="left", padx=(8, 2))
-        small_button(tools, "Reset", self.reset_pdf, width=56).pack(side="left", padx=2)
-        small_button(tools, "Clear", self.clear_pdf, width=56).pack(side="left", padx=2)
+        small_button(tools, "Reset", self.reset_pdf, width=56, hover=YELLOW_LIGHT).pack(side="left", padx=2)
+        small_button(tools, "Clear", self.clear_pdf, width=56, hover=RED_LIGHT).pack(side="left", padx=2)
 
         bar, self.pdf_summary = self.bottom_bar(frame)
         primary_button(bar, "Save PDF", self.save_pdf, width=200, height=48).pack(side="right")
-        self.pdf_output = SlideToggle(bar, [ONE_PDF, EVERY_PAGE, CUSTOM_SPLIT], command=self.on_pdf_output_change)
+        self.pdf_output = SlideToggle(bar, [ONE_PDF, EVERY_PAGE, CUSTOM_SPLIT], command=self.on_pdf_output_change,
+                                      knob_colours=[INK, ACCENT, LOGO_RED])
         self.pdf_output.pack(side="right", padx=16)
 
         # Extra row for "Custom split", only visible when that option is chosen
@@ -299,6 +308,7 @@ class PDFToolApp:
         self.pdf_grid = TileGrid(
             frame, "Add one or more PDF files to get started.\nYou can also drag them from Explorer into this window.",
             on_change=self.update_pdf_summary, rotatable=True, stacked=True, on_open=self.open_pdf_viewer,
+            placeholder_image=self.icon_image,
         )
         self.pdf_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
 
@@ -327,7 +337,7 @@ class PDFToolApp:
         self.pdf_grid.clear()
         if self.pdf_view == PAGES_VIEW:
             for page in pages:
-                self.pdf_grid.add(dict(page, title=f"Page {page['index'] + 1}"))
+                self.pdf_grid.add(dict(page, title=f"Page {page['index'] + 1}", colour=self.file_colour(page["source"])))
         else:
             for run in self._runs(pages):
                 first = run[0]
@@ -335,9 +345,16 @@ class PDFToolApp:
                     "run": run, "source": first["source"], "thumb": first["thumb"],
                     "angle": first["angle"], "base_angle": first["angle"],
                     "pages": len(run), "title": first["source"].name,
+                    "colour": self.file_colour(first["source"]),
                 })
         self._update_labels()
         self.pdf_grid.refresh()
+
+    def file_colour(self, source):
+        """Every PDF gets its own logo colour, shown on the page-number badges."""
+        sources = list(dict.fromkeys(page["source"] for page in self.pages_original))
+        index = sources.index(source) if source in sources else 0
+        return FILE_COLOURS[index % len(FILE_COLOURS)]
 
     @staticmethod
     def _runs(pages):
@@ -562,17 +579,19 @@ class PDFToolApp:
         ctk.CTkLabel(tools, text="All images", font=font(12), text_color=MUTED).pack(side="left", padx=(0, 8))
         symbol_button(tools, "↺", lambda: self.image_grid.rotate_all(-90)).pack(side="left", padx=2)
         symbol_button(tools, "↻", lambda: self.image_grid.rotate_all(90)).pack(side="left", padx=2)
-        small_button(tools, "Clear", lambda: self.image_grid.clear(), width=60).pack(side="left", padx=(8, 0))
+        small_button(tools, "Clear", lambda: self.image_grid.clear(), width=60, hover=RED_LIGHT).pack(side="left", padx=(8, 0))
 
         bar, self.image_summary = self.bottom_bar(frame)
         primary_button(bar, "Convert to PDF", self.save_images_as_pdf, width=220, height=48).pack(side="right")
         self.image_output = SlideToggle(bar, [IMAGES_COMBINED, IMAGES_SEPARATE],
-                                        command=lambda value: self.update_image_summary())
+                                        command=lambda value: self.update_image_summary(),
+                                        knob_colours=[INK, ACCENT])
         self.image_output.pack(side="right", padx=16)
 
         self.image_grid = TileGrid(
             frame, "Add one or more images to get started.\nYou can also drag them from Explorer into this window.",
             on_change=self.update_image_summary, rotatable=True, stacked=True, on_open=self.open_image_viewer,
+            placeholder_image=self.icon_image,
         )
         self.image_grid.pack(fill="both", expand=True, padx=20, pady=(10, 0))
 
@@ -589,7 +608,8 @@ class PDFToolApp:
             for path in sorted_paths(files):
                 try:
                     item = {"path": path, "title": path.name, "tooltip": f"{path.name}\n{path.parent}",
-                            "thumb": thumbnail(path), "pages": page_count(path)}
+                            "thumb": thumbnail(path), "pages": page_count(path),
+                            "colour": FILE_COLOURS[len(self.image_grid.items) % len(FILE_COLOURS)]}
                 except Exception:
                     failed.append(path.name)
                     continue
