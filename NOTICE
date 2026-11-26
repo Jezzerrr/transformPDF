@@ -1,0 +1,30 @@
+PLOOI - PDF tools
+Copyright (C) 2026 Jesse Metz
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License (see the file LICENSE).
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for details.
+
+
+Additional terms (section 7(b) of the GNU AGPL-3.0)
+---------------------------------------------------
+
+Anyone who conveys this program, or a work based on it, must preserve the
+author attribution "PLOOI by Jesse Metz":
+
+  - in the program's window, where it is shown in the original program, and
+  - in the documentation (such as a README) that comes with the work.
+
+Changed versions must keep this attribution and may add their own names,
+but must not present the work as made by someone else.
+
+
+A request (not a requirement)
+-----------------------------
+
+If you use PLOOI, share it, or build something with it: I'd love to hear
+about it! Send me a message via https://github.com/Jezzerrr.
