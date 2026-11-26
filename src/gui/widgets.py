@@ -18,17 +18,20 @@ from src.utils.thumbnails import PREVIEW_BG
 # STYLE
 # ==========================================================
 
-BG = "#E5F0FF"           # window background (light blue)
+# Colours of the PLOOI logo: black, yellow, red and blue on warm off-white
+BG = "#F3F1EC"           # window background (warm off-white)
 CARD = "#FFFFFF"         # cards / panels
-SUBCARD = "#F2F6FC"      # panels inside a card
-BORDER = "#D6E2F3"
-GREEN = "#00843D"        # Technische Unie green
-GREEN_HOVER = "#006B31"
-GREEN_LIGHT = "#E3F2E9"
-NAVY = "#2B2E83"         # Sonepar blue
-TEXT = "#1F2937"
-MUTED = "#6B7280"
-RED = "#B42318"
+SUBCARD = "#F7F5F0"      # panels inside a card
+BORDER = "#E5E1D8"
+ACCENT = "#2B59C3"       # logo blue: buttons, highlights
+ACCENT_HOVER = "#21479E"
+ACCENT_LIGHT = "#E6ECF8"
+INK = "#171717"          # logo black: titles, selected switches
+YELLOW = "#E9A80C"       # logo yellow
+LOGO_RED = "#D7263D"     # logo red
+TEXT = "#1F1F1F"
+MUTED = "#6B6B6B"
+RED = "#C21F35"          # error text
 
 HEADING_FONT = "Bahnschrift SemiBold"
 LIGHT_FONT = "Bahnschrift Light"
@@ -51,7 +54,7 @@ def heading(size):
 def primary_button(parent, text, command, height=44, **kwargs):
     return ctk.CTkButton(
         parent, text=text, command=command, height=height, corner_radius=10,
-        fg_color=GREEN, hover_color=GREEN_HOVER, text_color="white",
+        fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="white",
         font=heading(15), **kwargs
     )
 
@@ -59,20 +62,20 @@ def primary_button(parent, text, command, height=44, **kwargs):
 def secondary_button(parent, text, command, height=36, **kwargs):
     return ctk.CTkButton(
         parent, text=text, command=command, height=height, corner_radius=10,
-        fg_color=CARD, hover_color=GREEN_LIGHT, text_color=GREEN,
-        border_width=2, border_color=GREEN, font=font(13, "bold"), **kwargs
+        fg_color=CARD, hover_color=ACCENT_LIGHT, text_color=ACCENT,
+        border_width=2, border_color=ACCENT, font=font(13, "bold"), **kwargs
     )
 
 
 def small_button(parent, text, command, width=34, font_=None, text_color=TEXT):
     return ctk.CTkButton(
         parent, text=text, command=command, width=width, height=30, corner_radius=8,
-        fg_color=SUBCARD, hover_color=GREEN_LIGHT, text_color=text_color,
+        fg_color=SUBCARD, hover_color=ACCENT_LIGHT, text_color=text_color,
         font=font_ or font(13),
     )
 
 
-def symbol_button(parent, text, command, size=17, color=GREEN):
+def symbol_button(parent, text, command, size=17, color=ACCENT):
     """Small square button with a symbol such as ↺ ↻ ◀ ▶."""
     return small_button(parent, text, command, font_=ctk.CTkFont(family=SYMBOL_FONT, size=size), text_color=color)
 
@@ -123,7 +126,7 @@ class SlideToggle(tk.Canvas):
 
         knob_h = self.h - 2 * self.pad
         self._track_img = ImageTk.PhotoImage(_rounded_image(self.w, self.h, self.h // 2, SUBCARD, BORDER))
-        self._knob_img = ImageTk.PhotoImage(_rounded_image(self.segment, knob_h, knob_h // 2, NAVY))
+        self._knob_img = ImageTk.PhotoImage(_rounded_image(self.segment, knob_h, knob_h // 2, INK))
         self.create_image(0, 0, image=self._track_img, anchor="nw")
         self.knob = self.create_image(self._knob_x(0), self.pad, image=self._knob_img, anchor="nw")
         self.labels = [
@@ -276,7 +279,7 @@ def preview_image(thumb, angle=0, pages=1, stacked=False):
     """
     image = thumb.rotate(-angle, expand=True) if angle else thumb.copy()
     image = image.convert("RGB")
-    ImageDraw.Draw(image).rectangle([0, 0, image.width - 1, image.height - 1], outline="#C9D3E3", width=2)
+    ImageDraw.Draw(image).rectangle([0, 0, image.width - 1, image.height - 1], outline="#D9D3C7", width=2)
 
     layers = 0 if not stacked or pages < 2 else (1 if pages == 2 else 2)
     if not layers:
@@ -289,8 +292,8 @@ def preview_image(thumb, angle=0, pages=1, stacked=False):
     # Sheets behind the first page, shifted up and to the right
     for layer in range(layers, 0, -1):
         x, y = layer * offset, (layers - layer) * offset
-        shade = "#FFFFFF" if layer == 1 else "#F7F9FC"
-        draw.rectangle([x, y, x + image.width - 1, y + image.height - 1], fill=shade, outline="#B9C6DA", width=2)
+        shade = "#FFFFFF" if layer == 1 else "#FAF8F3"
+        draw.rectangle([x, y, x + image.width - 1, y + image.height - 1], fill=shade, outline="#C9C1B3", width=2)
     stack.paste(image, (0, layers * offset))
     return stack
 
@@ -309,7 +312,7 @@ class TileGrid(ctk.CTkScrollableFrame):
     def __init__(self, master, placeholder, on_change=None, rotatable=True, stacked=False, on_open=None):
         super().__init__(
             master, fg_color="transparent", corner_radius=0,
-            scrollbar_button_color="#C3D1E6", scrollbar_button_hover_color="#A9BBD6",
+            scrollbar_button_color="#D8D2C6", scrollbar_button_hover_color="#BDB5A6",
         )
         self.items = []
         self.columns = 0
@@ -323,7 +326,7 @@ class TileGrid(ctk.CTkScrollableFrame):
         self.placeholder = ctk.CTkLabel(self, text=placeholder, font=font(14), text_color=MUTED, justify="left")
         self.placeholder.grid(row=0, column=0, padx=10, pady=60, sticky="w")
 
-        self.marker = ctk.CTkFrame(self, width=5, height=PREVIEW_BOX, fg_color=GREEN, corner_radius=3)
+        self.marker = ctk.CTkFrame(self, width=5, height=PREVIEW_BOX, fg_color=ACCENT, corner_radius=3)
         self._drag = None
         self.tooltip = Tooltip(self.winfo_toplevel())
 
@@ -413,7 +416,7 @@ class TileGrid(ctk.CTkScrollableFrame):
         top = ctk.CTkFrame(tile, fg_color="transparent")
         top.pack(fill="x", padx=8, pady=(6, 0))
         item["number_label"] = ctk.CTkLabel(top, text="", width=26, height=22, corner_radius=11,
-                                            fg_color=NAVY, text_color="white", font=font(11, "bold"))
+                                            fg_color=INK, text_color="white", font=font(11, "bold"))
         item["number_label"].pack(side="left")
         ctk.CTkButton(top, text="✕", width=24, height=22, corner_radius=8, fg_color="transparent",
                       hover_color="#FDE2E2", text_color=MUTED, font=font(12),
@@ -474,8 +477,8 @@ class TileGrid(ctk.CTkScrollableFrame):
             parts.append(plural(item["pages"], "page"))
         if item["angle"]:
             parts.append({90: "↻ 90°", 180: "180°", 270: "↺ 90°"}[item["angle"]])
-        item["info_label"].configure(text="  ·  ".join(parts), text_color=GREEN if item["angle"] else MUTED)
-        item["frame"].configure(border_color=GREEN if item["angle"] else BORDER)
+        item["info_label"].configure(text="  ·  ".join(parts), text_color=ACCENT if item["angle"] else MUTED)
+        item["frame"].configure(border_color=ACCENT if item["angle"] else BORDER)
 
     # ---------- drag & drop re-ordering ----------
 
@@ -531,7 +534,7 @@ class TileGrid(ctk.CTkScrollableFrame):
         image = item["display"].copy()
         image.thumbnail((110, 110))
         photo = ImageTk.PhotoImage(image)
-        label = tk.Label(ghost, image=photo, bd=2, relief="solid", bg=GREEN)
+        label = tk.Label(ghost, image=photo, bd=2, relief="solid", bg=ACCENT)
         label.image = photo
         label.pack()
         self._drag["ghost"] = ghost

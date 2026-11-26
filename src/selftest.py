@@ -1,7 +1,7 @@
 """
-Quick check that a packaged TransformPDF.exe has everything it needs.
+Quick check that a packaged PLOOI.exe has everything it needs.
 
-    TransformPDF.exe --selftest result.txt
+    PLOOI.exe --selftest result.txt
 
 Opens the window briefly, makes a PDF preview, converts a HEIC photo and
 checks drag & drop, then writes OK (or the error) to result.txt.

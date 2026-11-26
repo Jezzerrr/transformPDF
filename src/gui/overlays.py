@@ -10,9 +10,9 @@ from pathlib import Path
 
 import customtkinter as ctk
 
-from src.gui.widgets import CARD, SUBCARD, GREEN, GREEN_HOVER, GREEN_LIGHT, TEXT, MUTED, RED, font, heading
+from src.gui.widgets import CARD, SUBCARD, ACCENT, ACCENT_HOVER, ACCENT_LIGHT, TEXT, MUTED, RED, font, heading
 
-AMBER = "#B7791F"
+AMBER = "#E9A80C"       # logo yellow
 VIEWER_BG = "#1E2230"
 VIEWER_PANEL = "#2A2F40"
 
@@ -35,7 +35,7 @@ class Toast:
 
     def show(self, title, message="", kind="success", file=None, folder=None, duration=6000):
         self.close()
-        color = GREEN if kind == "success" else AMBER
+        color = ACCENT if kind == "success" else AMBER
         icon = "✔" if kind == "success" else "!"
 
         frame = ctk.CTkFrame(self.root, fg_color=CARD, corner_radius=14, border_width=2, border_color=color)
@@ -76,7 +76,7 @@ class Toast:
 
     def _link(self, parent, text, command):
         ctk.CTkButton(parent, text=text, command=command, width=10, height=26, corner_radius=8,
-                      fg_color=GREEN_LIGHT, hover_color="#CDE8D7", text_color=GREEN_HOVER,
+                      fg_color=ACCENT_LIGHT, hover_color="#D3DEF5", text_color=ACCENT_HOVER,
                       font=font(12, "bold")).pack(side="left", padx=(0, 6))
 
     def _open(self, path):

@@ -15,7 +15,7 @@ from src.utils.page_ranges import parse_page_groups, format_page_ranges
 from src.utils.thumbnails import page_thumbnails, render_page, has_real_previews
 from src.gui.overlays import Toast, PageViewer
 from src.gui.widgets import (
-    BG, CARD, SUBCARD, BORDER, GREEN, NAVY, TEXT, MUTED, RED, GREEN_LIGHT, GREEN_HOVER,
+    BG, CARD, SUBCARD, BORDER, ACCENT, INK, TEXT, MUTED, RED, ACCENT_LIGHT, ACCENT_HOVER, YELLOW, LOGO_RED,
     LIGHT_FONT, SYMBOL_FONT,
     font, heading, primary_button, secondary_button, small_button, symbol_button, card, plural,
     SlideToggle, TileGrid,
@@ -106,8 +106,8 @@ class PDFToolApp:
     def __init__(self):
         self.root = AppWindow(fg_color=BG)
 
-        self.root.iconbitmap(BASE_DIR / "images" / "logoTU_icon.ico")
-        self.root.title("Transform PDF")
+        self.root.iconbitmap(BASE_DIR / "images" / "logo" / "plooi.ico")
+        self.root.title("PLOOI")
         self.root.geometry("1200x760")
         self.root.minsize(1100, 660)
 
@@ -144,33 +144,35 @@ class PDFToolApp:
         header = ctk.CTkFrame(self.root, fg_color=CARD, corner_radius=0, height=HEADER_HEIGHT - 4)
         header.pack(fill="x")
         header.pack_propagate(False)
-        ctk.CTkFrame(self.root, fg_color=GREEN, corner_radius=0, height=4).pack(fill="x")
+        # thin stripe under the header in the four logo colours
+        stripe = ctk.CTkFrame(self.root, fg_color=BG, corner_radius=0, height=4)
+        stripe.pack(fill="x")
+        for colour in (INK, YELLOW, LOGO_RED, ACCENT):
+            ctk.CTkFrame(stripe, fg_color=colour, corner_radius=0, height=4).pack(side="left", fill="x", expand=True)
 
         inner = ctk.CTkFrame(header, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=28)
 
-        logo = Image.open(BASE_DIR / "images" / "logoTU.png")
-        logo_height = 58
+        # PLOOI logo
+        logo = Image.open(BASE_DIR / "images" / "logo" / "plooi-logo.png")
+        logo_height = 40
         logo_width = int(logo.width * logo_height / logo.height)
         self.logo_image = ctk.CTkImage(light_image=logo, size=(logo_width, logo_height))
         ctk.CTkLabel(inner, text="", image=self.logo_image).pack(side="left")
 
-        ctk.CTkFrame(inner, fg_color=BORDER, width=2, height=56, corner_radius=1).pack(side="left", padx=24)
+        ctk.CTkFrame(inner, fg_color=BORDER, width=2, height=48, corner_radius=1).pack(side="left", padx=22)
 
         title_frame = ctk.CTkFrame(inner, fg_color="transparent")
         title_frame.pack(side="left")
-        title_row = ctk.CTkFrame(title_frame, fg_color="transparent")
-        title_row.pack(anchor="w")
-        ctk.CTkLabel(title_row, text="Transform", font=heading(30), text_color=NAVY).pack(side="left")
-        ctk.CTkLabel(title_row, text=" PDF", font=heading(30), text_color=GREEN).pack(side="left")
+        ctk.CTkLabel(title_frame, text="PDF tools", font=heading(17), text_color=INK, height=22).pack(anchor="w")
         ctk.CTkLabel(title_frame, text="by Jesse Metz", font=ctk.CTkFont(family=LIGHT_FONT, size=14),
-                     text_color=MUTED, height=16).pack(anchor="w", padx=(2, 0))
+                     text_color=MUTED, height=18).pack(anchor="w")
 
         self.mode_switch = ctk.CTkSegmentedButton(
             inner, values=MODES, command=self.show_mode,
             font=heading(15), height=42, corner_radius=12, border_width=4,
-            fg_color=SUBCARD, unselected_color=SUBCARD, unselected_hover_color=GREEN_LIGHT,
-            selected_color=GREEN, selected_hover_color=GREEN_HOVER,
+            fg_color=SUBCARD, unselected_color=SUBCARD, unselected_hover_color=ACCENT_LIGHT,
+            selected_color=INK, selected_hover_color="#333333",
             text_color=TEXT, dynamic_resizing=False, width=380,
         )
         self.mode_switch.pack(side="right")
@@ -209,7 +211,7 @@ class PDFToolApp:
         self.notify(f"{count} PDF files saved", f"in {folder}", folder=folder)
 
     def section_title(self, frame, title, subtitle):
-        ctk.CTkLabel(frame, text=title, font=heading(22), text_color=NAVY).pack(anchor="w", padx=28, pady=(22, 0))
+        ctk.CTkLabel(frame, text=title, font=heading(22), text_color=INK).pack(anchor="w", padx=28, pady=(22, 0))
         ctk.CTkLabel(frame, text=subtitle, font=font(13), text_color=MUTED).pack(anchor="w", padx=28, pady=(0, 14))
 
     def toolbar(self, frame, button_text, command):
@@ -496,7 +498,7 @@ class PDFToolApp:
             parts = " · ".join(format_page_ranges(group) for group in groups[:6])
             more = " · …" if len(groups) > 6 else ""
             text = f"{len(groups)} PDFs: {parts}{more}" + details
-        self.pdf_summary.configure(text=text, text_color=GREEN if (rotated or removed > 0) else MUTED)
+        self.pdf_summary.configure(text=text, text_color=ACCENT if (rotated or removed > 0) else MUTED)
 
     def save_pdf(self):
         pages = self.current_pages()
@@ -660,7 +662,7 @@ class PDFToolApp:
         self.root.dnd_bind("<<Drop>>", self._on_drop)
 
     def _on_drop_enter(self, event):
-        self.mode_frames[self.current_mode()].configure(border_color=GREEN, border_width=3)
+        self.mode_frames[self.current_mode()].configure(border_color=ACCENT, border_width=3)
         self.set_status("Drop the files to add them")
         return event.action
 

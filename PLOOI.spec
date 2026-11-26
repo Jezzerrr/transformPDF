@@ -1,13 +1,13 @@
-# PyInstaller recipe for TransformPDF.exe. Use build_exe.py to run it.
+# PyInstaller recipe for PLOOI.exe. Use build_exe.py to run it.
 import os
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 DEBUG = os.environ.get("TRANSFORMPDF_DEBUG") == "1"
-NAME = "TransformPDF-debug" if DEBUG else "TransformPDF"
+NAME = "PLOOI-debug" if DEBUG else "PLOOI"
 
 datas = [
-    ("images/logoTU.png", "images"),
-    ("images/logoTU_icon.ico", "images"),
+    ("images/logo/plooi-logo.png", "images/logo"),
+    ("images/logo/plooi.ico", "images/logo"),
 ]
 binaries = []
 hiddenimports = []
@@ -42,10 +42,10 @@ pyz = PYZ(a.pure)
 
 if DEBUG:
     exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=NAME,
-              icon="images/logoTU_icon.ico", console=True)
+              icon="images/logo/plooi.ico", console=True)
     coll = COLLECT(exe, a.binaries, a.datas, name=NAME)
 else:
     # Splash screen: shown at once, while the .exe unpacks itself (takes a few seconds)
     splash = Splash("images/splash.png", binaries=a.binaries, datas=a.datas, text_pos=None, always_on_top=False)
     exe = EXE(pyz, a.scripts, splash, splash.binaries, a.binaries, a.datas, [], name=NAME,
-              icon="images/logoTU_icon.ico", console=False, upx=False)
+              icon="images/logo/plooi.ico", console=False, upx=False)

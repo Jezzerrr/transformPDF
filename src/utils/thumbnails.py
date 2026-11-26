@@ -15,7 +15,7 @@ except ImportError:
 
 
 THUMB_SIZE = 280  # longest side in pixels (rendered at 2x for sharp display)
-PREVIEW_BG = "#F2F6FC"  # background behind the preview in the app
+PREVIEW_BG = "#F5F3EE"  # background behind the preview in the app
 
 
 def has_real_previews():
@@ -83,24 +83,24 @@ def _draw_page(width, height):
 
     img = Image.new("RGB", (w, h), "white")
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, w - 1, h - 1], outline="#C9D3E3", width=2)
+    draw.rectangle([0, 0, w - 1, h - 1], outline="#D9D3C7", width=2)
 
     margin = int(min(w, h) * 0.12)
     line_h = max(int(min(w, h) * 0.035), 4)
     gap = line_h * 2
 
     # A "title" bar plus some text lines in the top part, so "up" is visible.
-    draw.rectangle([margin, margin, int(w * 0.6), margin + line_h * 2], fill="#00843D")
+    draw.rectangle([margin, margin, int(w * 0.6), margin + line_h * 2], fill="#2B59C3")
     y = margin + line_h * 2 + gap
     widths = [0.88, 0.8, 0.86, 0.6, 0.84, 0.72]
     for frac in widths:
         if y + line_h > h * 0.62:
             break
-        draw.rectangle([margin, y, margin + int((w - 2 * margin) * frac), y + line_h], fill="#D5DCE8")
+        draw.rectangle([margin, y, margin + int((w - 2 * margin) * frac), y + line_h], fill="#E2DDD3")
         y += gap
 
     # Folded corner top-right
     fold = int(min(w, h) * 0.14)
-    draw.polygon([(w - fold, 0), (w - 1, fold), (w - fold, fold)], fill="#E5ECF7", outline="#C9D3E3")
+    draw.polygon([(w - fold, 0), (w - 1, fold), (w - fold, fold)], fill="#EFEBE3", outline="#D9D3C7")
     draw.polygon([(w - fold, 0), (w, 0), (w, fold)], fill=PREVIEW_BG)
     return img
